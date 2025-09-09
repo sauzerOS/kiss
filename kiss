@@ -2238,7 +2238,6 @@ pkg_libdeps() {
 
     # Sort and deduplicate
     sort -u "$libdeps_file" -o "$pkg_dir/$1/$pkg_db/$1/libdeps"
-    log "$1" "libdeps file created at $pkg_dir/$1/$pkg_db/$1/libdeps"
     # Include in manifest
     echo "/$pkg_db/$1/libdeps" >> "$pkg_dir/$1/$pkg_db/$1/manifest"
 }
