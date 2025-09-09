@@ -548,6 +548,7 @@ pkg_source_git() {
 
     if [ -d "$repo/.git" ]; then
         # Repo exists, try to update the exact ref
+        git -C "$repo" config advice.detachedHead false
         git -C "$repo" fetch --tags --prune origin "$com" || {
             log "$repo_name" "Failed to fetch update, recloning..."
             rm -rf "$repo"
@@ -556,6 +557,7 @@ pkg_source_git() {
 
     if [ ! -d "$repo/.git" ]; then
         # Clone fresh if missing or removed
+        git -C "$repo" config advice.detachedHead false
         git clone --no-checkout "$url" "$repo" || {
             log "$repo_name" "Failed to clone repo"
             return 1
@@ -567,6 +569,7 @@ pkg_source_git() {
     fi
 
     # Checkout and hard reset to the fetched commit
+    git -C "$repo" config advice.detachedHead false
     git -C "$repo" checkout FETCH_HEAD || {
         log "$repo_name" "Failed to checkout $com"
         return 1
