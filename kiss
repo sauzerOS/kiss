@@ -1108,10 +1108,8 @@ pkg_build_all() {
 
         pkg_fix_deps "$pkg"
         pkg_libdeps "$pkg"
-        echo "reached pkg_libdeps" >&2
         pkg_check_removed_libs "$pkg"
         pkg_etcsums
-        echo "reached pkg_tar" >&2
         pkg_tar      "$pkg"
 
         # Prompt and install this package immediately after building
