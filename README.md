@@ -9,13 +9,13 @@
 
 - ✅ **GNU tools required**: `coreutils`, `grep`, `tar`, `bash`  
 - ✅ **Global environment flags** in **`/etc/kiss/flags`**  
-- ✅ **Configurable paths** for binaries, logs, and sources  
+- ✅ **Configurable global path** for bin/logs/sources  
 - ✅ Support for **alternate tmpdir builds** (`/etc/kiss/BIG_PKGS`)  
 - ✅ **Deduplicated source downloads** (shared cache across packages)  
 - ✅ Tracks **all library dependencies** per package  
   - Stored in `/var/db/kiss/installed/pkg/libdeps`  
-- ✅ Update check: warns if a removed library is still needed  
-- ✅ Shows **build time** after each build  
+- ✅ Prompts for package rebuilds after library upgrades  
+- ✅ Shows **build time**  
 
 ---
 
