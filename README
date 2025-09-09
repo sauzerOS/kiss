@@ -1,3 +1,18 @@
+Package Manager for sauzerOS
+modified kiss by Dylan Araps and Kiss Community
+all code written with AI so don't expect good code
+
+Main Changes:
+- Expects GNU coreutils, grep, tar, bash
+- More environment flags
+- Global file for env vars (/etc/kiss/flags)
+- Option to set global bin/logs/source dirs
+- Option for specific packages to be built in an alternate tmpdir (/etc/kiss/BIG_PKGS)
+- Scans all cached sources to avoid duplicate downloads if multiple packages use the same source
+- Keeps track of all library deps of a package (/var/db/kiss/installed/pkg/libdeps)
+- On update checks if a removed library is used by installed packages and prompts for package rebuilds
+- Build time
+
 KISS_INSTALL
 1 default   : prompt for install
 0 override  : build only

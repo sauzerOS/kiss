@@ -595,7 +595,7 @@ pkg_source_tar() {
         tar -xf "$_tmp_file_pre" ||
             die "$repo_name" "Failed to extract tarball"
     fi
-    
+
     # Remove the tarball now that we are done with it.
     rm -f "$_tmp_file_pre"
 }
@@ -1107,6 +1107,8 @@ pkg_build_all() {
         cd "$pkg_dir/$pkg/$pkg_db/$pkg"
 
         pkg_fix_deps "$pkg"
+        pkg_libdeps "$pkg"
+        pkg_check_removed_libs "$pkg"
         pkg_etcsums
         pkg_tar      "$pkg"
 
@@ -1119,8 +1121,8 @@ pkg_build_all() {
                 ! prompt "Install built package? [$pkg]" || (args i "$bin_dir/$pkg@$repo_ver-$repo_rel.tar.$KISS_COMPRESS")
         fi
     done
-
-    # Final prompt/install removed: only per-package prompt/install is used now
+        # Prompt to rebuild package affected by changed libs
+        pkg_prompt_rebuilds "$pkg"
 }
 
 pkg_build() {
@@ -2185,6 +2187,135 @@ create_tmp_dirs() {
 
     mkdir -p "$src_dir" "$log_dir" "$bin_dir" \
              "$mak_dir" "$pkg_dir" "$tar_dir" "$tmp_dir"
+}
+
+pkg_libdeps() {
+    # Generate a list of shared library dependencies for a package
+    # Combined with pkg_check_removed_libs() we should get a warning if a package update
+    # removes libraries that are still needed by other installed packages.
+    log "$1" "Generating libdeps file"
+
+    tmp_file "$1" libdeps
+    libdeps_file="$_tmp_file"
+    while read -r file; do
+    file="${file#/}"  # Normalize path
+    full_path="$pkg_dir/$1/$file"
+    [ -h "$full_path" ] && continue
+
+    case $file in
+        */bin/*|*/sbin/*|*/lib/*|*/lib??/*|*/lib???/*)
+    # Check if it's an ELF binary
+    if head -c 4 "$full_path" 2>/dev/null | grep -q $'\x7fELF'; then
+    deps=$(ldd "$full_path" 2>/dev/null | awk '/=>/ {print $3}' | grep -vE '^(\s*$|not found)' || true)
+    for dep in $deps; do
+        lib="${dep##*/}"
+        case $lib in
+            ld-*           |\
+            lib[cm].so*    |\
+            libc++.so*     |\
+            libc++abi.so*  |\
+            libcrypt.so*   |\
+            libdl.so*      |\
+            libgcc_s.so*   |\
+            libmvec.so*    |\
+            libpthread.so* |\
+            libresolv.so*  |\
+            librt.so*      |\
+            libstdc++.so*  |\
+            libtrace.so*   |\
+            libunwind.so*  |\
+            libutil.so*    |\
+            libxnet.so*    )
+                continue
+            ;;
+        esac
+        echo "$dep" >> "$libdeps_file"
+    done
+    fi
+            ;;
+        esac
+    done < "$pkg_dir/$1/$pkg_db/$1/manifest"
+
+    # Sort and deduplicate
+    sort -u "$libdeps_file" -o "$pkg_dir/$1/$pkg_db/$1/libdeps"
+    log "$1" "libdeps file created at $pkg_dir/$1/$pkg_db/$1/libdeps"
+    # Include in manifest
+    echo "/$pkg_db/$1/libdeps" >> "$pkg_dir/$1/$pkg_db/$1/manifest"
+}
+
+pkg_check_removed_libs() {
+    # Skip if we are already rebuilding affected packages
+    [ "$KISS_NO_REBUILD_PROMPT" = "1" ] && return 0
+
+    old_manifest="/var/db/kiss/installed/$1/manifest"
+    new_manifest="$pkg_dir/$1/$pkg_db/$1/manifest"
+
+    [ -f "$old_manifest" ] || return 0
+
+    tmp_file "$1" old_libs;      old_libs="$_tmp_file"
+    tmp_file "$1" new_libs;      new_libs="$_tmp_file"
+    tmp_file "$1" removed_libs;  removed_libs="$_tmp_file"
+    tmp_file "$1" lib_warnings;  lib_warnings="$_tmp_file"
+
+    # Match .so and versioned .so.* files
+    grep -E '/lib.*/lib[^/]+\.so(\.[^/]*)?' "$old_manifest" > "$old_libs"
+    grep -E '/lib.*/lib[^/]+\.so(\.[^/]*)?' "$new_manifest" > "$new_libs"
+
+    # Find removed libraries
+    sort "$old_libs" -o "$old_libs"
+    sort "$new_libs" -o "$new_libs"
+    comm -23 "$old_libs" "$new_libs" > "$removed_libs"
+    # Filter out plain .so libs
+    grep -vE '\.so$' "$removed_libs" > "$removed_libs.filtered"
+    removed_libs="$removed_libs.filtered"
+
+    # Check each removed lib against all installed packages' libdeps
+    #set +f # Enable globbing
+    #for check_pkg in /var/db/kiss/installed/*; do
+    #    [ -f "$check_pkg/libdeps" ] || continue
+    #    for removed in $(cat "$removed_libs"); do
+    #        grep -q "$removed" "$check_pkg/libdeps" && {
+    #            echo "${check_pkg##*/} depends on removed lib: $removed" >> "$lib_warnings"
+    #        }
+    #    done
+    #done
+
+    # Emit warnings
+    #if [ -s "$lib_warnings" ]; then
+    #    log "$1" "⚠️ Warning: Removed libraries still used by other packages:"
+    #    cat "$lib_warnings" >&2
+    #    log "$1" "Consider rebuilding affected packages."
+    #fi
+}
+
+pkg_prompt_rebuilds() {
+    [ "$KISS_NO_REBUILD_PROMPT" = "1" ] && return 0
+
+    affected_pkgs=()
+    set +f # Enable globbing
+    for check_pkg in /var/db/kiss/installed/*; do
+        [ -f "$check_pkg/libdeps" ] || continue
+        for removed in $(cat "$removed_libs"); do
+            grep -q "$removed" "$check_pkg/libdeps" && {
+                affected_pkgs+=("${check_pkg##*/}")
+            }
+        done
+    done
+
+    affected_pkgs=($(printf "%s\n" "${affected_pkgs[@]}" | sort -u))
+
+    if [ "${#affected_pkgs[@]}" -gt 0 ]; then
+        echo "⚠️ The following packages may need to be rebuilt:"
+        printf ' - %s\n' "${affected_pkgs[@]}"
+        echo
+        printf "Do you want to rebuild them now? [y/N] "
+        read -r reply
+
+        if [ "$reply" = "y" ] || [ "$reply" = "Y" ]; then
+            echo "→ Rebuilding affected packages..."
+            KISS_NO_REBUILD_PROMPT=1 kiss b "${affected_pkgs[@]}"
+        fi
+    fi
 }
 
 main() {
