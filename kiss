@@ -451,21 +451,39 @@ pkg_source_resolve() {
 pkg_source() {
     pkg_find_version "$1"
 
-    [ -f "$repo_dir/sources" ] || return 0
+   [ -f "$repo_dir/sources" ] || return 0
     log "$1" "Reading sources"
 
     while read -r src dest || ok "$src"; do
         pkg_source_resolve "$1" "$src" "$dest" "$2"
 
-            if printf '%s' "$src" | grep -qE '^(git\+)?https?://'; then
-            # Skip duplicate check for git+ URLs
-            if printf '%s' "$src" | grep -qE '^git\+'; then
-            continue
+        if printf '%s' "$src" | grep -qE '^git\+'; then
+            repo_path="$src_dir/$1/$(basename "${src##git+}")"
+
+            # Update if repo exists
+            if [ -d "$repo_path/.git" ]; then
+                log "$1" "Updating existing git repo at $repo_path"
+                git -C "$repo_path" pull --rebase || {
+                    log "$1" "Failed to update repo, removing and recloning"
+                    rm -rf "$repo_path"
+                }
             fi
+
+            #Clone if missing
+            if [ ! -d "$repo_path/.git" ]; then
+                log "$1" "Cloning git repo ${src#git+} into $repo_path"
+                git clone "${src#git+}" "$repo_path"
+            fi
+            
+            run_hook post-source "$1" "$src" "$repo_path"
+            
+            continue
+        fi
+
+        if printf '%s' "$src" | grep -qE '^https?://'; then
             src_filename="${src##*/}"
             own_subdir_file="$src_dir/$1/$src_filename"
 
-            # Function to copy source file to destination
             copy_source() {
                 local source_file="$1"
                 local destination="$2"
@@ -475,14 +493,12 @@ pkg_source() {
                 run_hook post-source "$1" "$src" "$destination"
             }
 
-            # Check own subdir first
             if [ -f "$own_subdir_file" ]; then
                 log "$1" "Found existing source $src_filename in $own_subdir_file, using it"
                 copy_source "$own_subdir_file" "$_des"
                 continue
             fi
 
-            # Search other subdirs
             found_copy=$(find "$src_dir" -type f -name "$src_filename" ! -path "$own_subdir_file" 2>/dev/null | head -n 1)
             if [ -n "$found_copy" ]; then
                 log "$1" "Found existing source $src_filename in $found_copy, copying instead of downloading"
