@@ -1,5 +1,9 @@
-#!/bin/sh
+#!/bin/bash
 # shellcheck source=/dev/null
+# Package manager for sauzerOS
+# ⚠️ NOT POSIX COMPLIANT ⚠️
+# GNU Coreutils and GNU tools expected
+# Based on kiss package manager
 #
 # Simple package manager written in POSIX shell for https://kisslinux.github.io
 #
@@ -451,35 +455,24 @@ pkg_source_resolve() {
 pkg_source() {
     pkg_find_version "$1"
 
-   [ -f "$repo_dir/sources" ] || return 0
+    [ -f "$repo_dir/sources" ] || return 0
     log "$1" "Reading sources"
 
     while read -r src dest || ok "$src"; do
         pkg_source_resolve "$1" "$src" "$dest" "$2"
+        resolved_dest="$_des"
 
-        if printf '%s' "$src" | grep -qE '^git\+'; then
-            repo_path="$src_dir/$1/$(basename "${src##git+}")"
+        # Skip git handling if called from 'kiss c'
+        case $2$_res in
+            "$2url+"*|git+*)
+                [ "$2" ] && continue  # Skip if $2 is set (checksum mode)
+                mkcd "${resolved_dest%/*}"
+                "pkg_source_${_res%%+*}" "$resolved_dest" "${_res##"${_res%%+*}+"}"
+                continue
+            ;;
+        esac
 
-            # Update if repo exists
-            if [ -d "$repo_path/.git" ]; then
-                log "$1" "Updating existing git repo at $repo_path"
-                git -C "$repo_path" pull --rebase || {
-                    log "$1" "Failed to update repo, removing and recloning"
-                    rm -rf "$repo_path"
-                }
-            fi
-
-            #clone if missing
-            if [ ! -d "$repo_path/.git" ]; then
-                log "$1" "Cloning git repo ${src#git+} into $repo_path"
-                git clone "${src#git+}" "$repo_path"
-            fi
-            
-            run_hook post-source "$1" "$src" "$repo_path"
-            
-            continue
-        fi
-
+        # Handle regular HTTP/HTTPS sources
         if printf '%s' "$src" | grep -qE '^https?://'; then
             src_filename="${src##*/}"
             own_subdir_file="$src_dir/$1/$src_filename"
@@ -495,35 +488,21 @@ pkg_source() {
 
             if [ -f "$own_subdir_file" ]; then
                 log "$1" "Found existing source $src_filename in $own_subdir_file, using it"
-                copy_source "$own_subdir_file" "$_des"
+                copy_source "$own_subdir_file" "$resolved_dest"
                 continue
             fi
 
             found_copy=$(find "$src_dir" -type f -name "$src_filename" ! -path "$own_subdir_file" 2>/dev/null | head -n 1)
             if [ -n "$found_copy" ]; then
                 log "$1" "Found existing source $src_filename in $found_copy, copying instead of downloading"
-                copy_source "$found_copy" "$_des"
+                copy_source "$found_copy" "$resolved_dest"
                 continue
             fi
         fi
 
-        # arg1: pre-source
-        # arg2: package name
-        # arg3: source
+        # Fallback for other source types
         run_hook pre-source "$1" "$src"
-
-        # '$2' is set when this function is called from 'kiss c' and it is used
-        # here to skip calling the Git code.
-        case $2$_res in "$2url+"*|git+*)
-            mkcd "${_des%/*}"
-            "pkg_source_${_res%%+*}" "$_des" "${_res##"${_res%%+*}+"}"
-        esac
-
-        # arg1: post-source
-        # arg2: package name
-        # arg3: source
-        # arg4: destination
-        run_hook post-source "$1" "$src" "${_des:-"$_res"}"
+        run_hook post-source "$1" "$src" "${resolved_dest:-"$_res"}"
     done < "$repo_dir/sources"
 }
 
@@ -594,52 +573,29 @@ pkg_source_git() {
 }
 
 pkg_source_tar() {
-    # This is a portable shell implementation of GNU tar's
-    # '--strip-components 1'. Use of this function denotes a
-    # performance penalty.
     tmp_file "$repo_name" tarball
     tmp_file "$repo_name" tarball-manifest
 
     decompress "$1" > "$_tmp_file_pre" ||
         die "$repo_name" "Failed to decompress $1"
 
-    tar xf "$_tmp_file_pre" ||
-        die "$repo_name" "Failed to extract $1"
-
-    # The sort command filters out all duplicate top-level
-    # directories from the tarball's manifest. This is an optimization
-    # as we avoid looping (4000 times for Python(!)).
-    tar tf "$_tmp_file_pre" | sort -ut / -k1,1 > "$_tmp_file" ||
+    # Extract manifest to determine top-level structure
+    tar tf "$_tmp_file_pre" | awk -F/ '{print $1}' | sort -u > "$_tmp_file" ||
         die "$repo_name" "Failed to extract manifest"
 
-    # Iterate over all directories in the first level of the
-    # tarball's manifest. Each directory is moved up a level.
-    while IFS=/ read -r dir _; do case ${dir#.} in *?*)
-        # Skip entries which aren't directories.
-        [ -d "$dir" ] || continue
+    # Count unique top-level entries
+    top_level_count=$(wc -l < "$_tmp_file")
 
-        # Move the parent directory to prevent naming conflicts
-        # with the to-be-moved children.
-        mv -f "$dir" "$KISS_PID-$dir"
-
-        # Move all children up a directory level. If the mv command
-        # fails, fallback to copying the remainder of the files.
-        #
-        # We can't use '-exec {} +' with any arguments between
-        # the '{}' and '+' as this is not POSIX. We must also
-        # use '$0' and '$@' to reference all arguments.
-        find "$KISS_PID-$dir/." ! -name . -prune \
-            -exec sh -c 'mv -f "$0" "$@" .' {} + 2>/dev/null ||
-
-        find "$KISS_PID-$dir/." ! -name . -prune \
-            -exec sh -c 'cp -fRPp "$0" "$@" .' {} +
-
-        # Remove the directory now that all files have been
-        # transferred out of it. This can't be a simple 'rmdir'
-        # as we may leave files in here if any were copied.
-        rm -rf "$KISS_PID-$dir"
-    esac done < "$_tmp_file"
-
+    if [ "$top_level_count" -eq 1 ]; then
+        # Safe to strip top-level directory
+        tar --strip-components=1 -xf "$_tmp_file_pre" ||
+            die "$repo_name" "Failed to extract tarball with strip"
+    else
+        # Multiple top-level entries — extract as-is
+        tar -xf "$_tmp_file_pre" ||
+            die "$repo_name" "Failed to extract tarball"
+    fi
+    
     # Remove the tarball now that we are done with it.
     rm -f "$_tmp_file_pre"
 }
