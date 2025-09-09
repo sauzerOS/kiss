@@ -1,6 +1,6 @@
 # 🌌 SauzerOS Package Manager
 
-> **Modified [KISS](https://kisslinux.org) by Dylan Araps & the KISS Community**  
+> **Modified [KISS](https://kisslinux.github.io/wiki/package-manager) by Dylan Araps & the KISS Community**  
 > ⚠️ *All code written with AI — don’t expect perfection!*  
 
 ---
