@@ -469,7 +469,7 @@ pkg_source() {
                 }
             fi
 
-            #Clone if missing
+            #clone if missing
             if [ ! -d "$repo_path/.git" ]; then
                 log "$1" "Cloning git repo ${src#git+} into $repo_path"
                 git clone "${src#git+}" "$repo_path"
@@ -558,18 +558,39 @@ pkg_source_url() {
 }
 
 pkg_source_git() {
-    com=${2##*[@#]}
-    com=${com#"${2%[#@]*}"}
+    repo="$1"
+    url="${2%[#@]*}"
+    com="${2##*[@#]}"
+    com="${com#"${2%[#@]*}"}"
+    com="${com:-HEAD}"
 
+    log "$repo_name" "Fetching git repo: $url"
     log "$repo_name" "Checking out ${com:-FETCH_HEAD}"
 
-    [ -d .git ] || git init
+    if [ -d "$repo/.git" ]; then
+        # Repo exists, try to update
+        git -C "$repo" fetch origin "$com" || {
+            log "$repo_name" "Failed to fetch update, recloning..."
+            rm -rf "$repo"
+        }
+    fi
 
-    git remote set-url origin "${2%[#@]*}" 2>/dev/null ||
-        git remote add origin "${2%[#@]*}"
+    if [ ! -d "$repo/.git" ]; then
+        # Clone fresh if missing or removed
+        git clone "$url" "$repo" || {
+            log "$repo_name" "Failed to clone repo"
+            return 1
+        }
+    fi
 
-    git fetch --depth=1 origin "$com"
-    git reset --hard FETCH_HEAD
+    # Checkout desired commit/tag/branch
+    git -C "$repo" checkout "$com" || {
+        log "$repo_name" "Failed to checkout $com"
+        return 1
+    }
+
+    # Optional: reset to remote state
+    git -C "$repo" reset --hard "origin/$com" 2>/dev/null || true
 }
 
 pkg_source_tar() {
