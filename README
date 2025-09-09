@@ -1,0 +1,35 @@
+KISS_INSTALL
+1 default   : prompt for install
+0 override  : build only
+
+KISS_AUTO
+0 default   : prompt for install
+1 override  : auto install
+
+KISS_TMPDIR
+tmpdir for build
+
+KISS_TMPDIR2
+tmpdir for packages set in /etc/kiss/BIG_PKGS
+ 
+KISS_DL
+source download tool
+
+KISS_DIRS
+kiss dirs path (bin/logs/source)
+
+KISS_QUIET
+0 default  : build output to tty
+1 override : no build output
+
+KISS_SU
+superuser tool for install
+
+KISS_COMPRESSION
+package compression
+
+KISS_STRIP
+1 default  : strip packages
+0 override : disable stripping
+can be overriden in build file with :> nostrip
+
