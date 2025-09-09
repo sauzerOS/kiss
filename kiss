@@ -1108,8 +1108,10 @@ pkg_build_all() {
 
         pkg_fix_deps "$pkg"
         pkg_libdeps "$pkg"
+        echo "reached pkg_libdeps" >&2
         pkg_check_removed_libs "$pkg"
         pkg_etcsums
+        echo "reached pkg_tar" >&2
         pkg_tar      "$pkg"
 
         # Prompt and install this package immediately after building
@@ -2255,36 +2257,17 @@ pkg_check_removed_libs() {
     tmp_file "$1" new_libs;      new_libs="$_tmp_file"
     tmp_file "$1" removed_libs;  removed_libs="$_tmp_file"
     tmp_file "$1" lib_warnings;  lib_warnings="$_tmp_file"
-
     # Match .so and versioned .so.* files
-    grep -E '/lib.*/lib[^/]+\.so(\.[^/]*)?' "$old_manifest" > "$old_libs"
-    grep -E '/lib.*/lib[^/]+\.so(\.[^/]*)?' "$new_manifest" > "$new_libs"
+    grep -E '/lib.*/lib[^/]+\.so(\.[^/]*)?' "$old_manifest" > "$old_libs" || true
+    grep -E '/lib.*/lib[^/]+\.so(\.[^/]*)?' "$new_manifest" > "$new_libs" || true
 
     # Find removed libraries
     sort "$old_libs" -o "$old_libs"
     sort "$new_libs" -o "$new_libs"
     comm -23 "$old_libs" "$new_libs" > "$removed_libs"
     # Filter out plain .so libs
-    grep -vE '\.so$' "$removed_libs" > "$removed_libs.filtered"
+    grep -vE '\.so$' "$removed_libs" > "$removed_libs.filtered" || true
     removed_libs="$removed_libs.filtered"
-
-    # Check each removed lib against all installed packages' libdeps
-    #set +f # Enable globbing
-    #for check_pkg in /var/db/kiss/installed/*; do
-    #    [ -f "$check_pkg/libdeps" ] || continue
-    #    for removed in $(cat "$removed_libs"); do
-    #        grep -q "$removed" "$check_pkg/libdeps" && {
-    #            echo "${check_pkg##*/} depends on removed lib: $removed" >> "$lib_warnings"
-    #        }
-    #    done
-    #done
-
-    # Emit warnings
-    #if [ -s "$lib_warnings" ]; then
-    #    log "$1" "⚠️ Warning: Removed libraries still used by other packages:"
-    #    cat "$lib_warnings" >&2
-    #    log "$1" "Consider rebuilding affected packages."
-    #fi
 }
 
 pkg_prompt_rebuilds() {
