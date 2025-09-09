@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 # shellcheck source=/dev/null
 #
 # Simple package manager written in POSIX shell for https://kisslinux.github.io
@@ -24,7 +24,7 @@
 # LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
-# Modified for sauzerOS, no POSIX compliance, excepts bash
+
 
 # Parse /etc/kiss/flags for default environment variables, but allow env to take precedence
 if [ -f /etc/kiss/flags ]; then
@@ -449,55 +449,45 @@ pkg_source_resolve() {
 }
 
 pkg_source() {
-    # Download any remote package sources. The existence of local files is
-    # also checked.
     pkg_find_version "$1"
 
-    # Support packages without sources. Simply do nothing.
     [ -f "$repo_dir/sources" ] || return 0
-
     log "$1" "Reading sources"
 
     while read -r src dest || ok "$src"; do
         pkg_source_resolve "$1" "$src" "$dest" "$2"
 
-        # Check for existing source tarball in own subdir first, then in other subdirs to avoid duplicate downloads
-        if printf '%s' "$src" | grep -qE '://'; then
+            if printf '%s' "$src" | grep -qE '^(git\+)?https?://'; then
+            # Skip duplicate check for git+ URLs
+            if printf '%s' "$src" | grep -qE '^git\+'; then
+            continue
+            fi
             src_filename="${src##*/}"
             own_subdir_file="$src_dir/$1/$src_filename"
+
+            # Function to copy source file to destination
+            copy_source() {
+                local source_file="$1"
+                local destination="$2"
+                [ -n "$destination" ] || return 0
+                mkdir -p "${destination%/*}"
+                cp -a "$source_file" "$destination"
+                run_hook post-source "$1" "$src" "$destination"
+            }
+
+            # Check own subdir first
             if [ -f "$own_subdir_file" ]; then
                 log "$1" "Found existing source $src_filename in $own_subdir_file, using it"
-                if [ -n "${_des}" ]; then
-                    dir_to_make="${_des%/*}"
-                    if [ -n "$dir_to_make" ]; then
-                        mkdir -p "$dir_to_make"
-                    fi
-                    cp -a "$own_subdir_file" "${_des}"
-                    run_hook post-source "$1" "$src" "${_des}"
-                fi
+                copy_source "$own_subdir_file" "$_des"
                 continue
-            else
-                found_copy=""
-                # Search for the file in src_dir and all subdirs except own
-                while IFS= read -r found; do
-                    case "$found" in
-                        "$own_subdir_file") continue ;;
-                    esac
-                    found_copy="$found"
-                    break
-                done < <(find "$src_dir" -type f -name "$src_filename" 2>/dev/null)
-                if [ -n "$found_copy" ]; then
-                    log "$1" "Found existing source $src_filename in $found_copy, copying instead of downloading"
-                    if [ -n "${_des}" ]; then
-                        dir_to_make="${_des%/*}"
-                        if [ -n "$dir_to_make" ]; then
-                            mkdir -p "$dir_to_make"
-                        fi
-                        cp -a "$found_copy" "${_des}"
-                        run_hook post-source "$1" "$src" "${_des}"
-                    fi
-                    continue
-                fi
+            fi
+
+            # Search other subdirs
+            found_copy=$(find "$src_dir" -type f -name "$src_filename" ! -path "$own_subdir_file" 2>/dev/null | head -n 1)
+            if [ -n "$found_copy" ]; then
+                log "$1" "Found existing source $src_filename in $found_copy, copying instead of downloading"
+                copy_source "$found_copy" "$_des"
+                continue
             fi
         fi
 
