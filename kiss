@@ -537,40 +537,45 @@ pkg_source_url() {
 }
 
 pkg_source_git() {
-    repo="$1"
-    url="${2%[#@]*}"
-    com="${2##*[@#]}"
+    local repo="$1"
+    local url="${2%[#@]*}"
+    local com="${2##*[@#]}"
     com="${com#"${2%[#@]*}"}"
     com="${com:-HEAD}"
 
-    log "$repo_name" "Fetching git repo: $url"
-    log "$repo_name" "Checking out ${com:-FETCH_HEAD}"
+    log "$repo_name" "Cloning/updating git repo: $url@$com"
 
     if [ -d "$repo/.git" ]; then
-        # Repo exists, try to update
-        git -C "$repo" fetch origin "$com" || {
-            log "$repo_name" "Failed to fetch update, recloning..."
+        # Repo exists: fetch just the ref we care about (branch, tag or SHA)
+        git -C "$repo" fetch --tags --prune origin "$com" || {
+            log "$repo_name" "Fetch failed, recloning…"
             rm -rf "$repo"
         }
     fi
 
     if [ ! -d "$repo/.git" ]; then
-        # Clone fresh if missing or removed
-        git clone "$url" "$repo" || {
-            log "$repo_name" "Failed to clone repo"
+        # Fresh clone (shallow for speed)
+        git clone --depth 1 "$url" "$repo" || {
+            log "$repo_name" "Clone failed"
             return 1
         }
+        # If they requested something other than HEAD, pull that in
+        [ "$com" = "HEAD" ] || git -C "$repo" fetch --tags --prune origin "$com"
     fi
 
-    # Checkout desired commit/tag/branch
+    # Checkout the requested ref
     git -C "$repo" checkout "$com" || {
         log "$repo_name" "Failed to checkout $com"
         return 1
     }
 
-    # Optional: reset to remote state
-    git -C "$repo" reset --hard "origin/$com" 2>/dev/null || true
+    # Force-reset the working tree to whatever we just fetched
+    git -C "$repo" reset --hard FETCH_HEAD || {
+        log "$repo_name" "Reset to FETCH_HEAD failed"
+        return 1
+    }
 }
+
 
 pkg_source_tar() {
     tmp_file "$repo_name" tarball
