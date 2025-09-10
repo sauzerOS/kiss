@@ -602,16 +602,12 @@ pkg_depends() {
 
     # Detect circular dependencies and bail out unless KISS_FORCE=1 (usefull for package uninstall)
     # Looks for multiple repeating patterns of (dep dep_parent) (5 is max).
-if [ "${KISS_FORCE:-0}" != 1 ]; then
-case " $4 " in
-*" ${4##* } "*" $1 "\
-*" ${4##* } "*" $1 "\
-*" ${4##* } "*" $1 "\
-*" ${4##* } "*" $1 "\
-*" ${4##* } "*" $1 "*)
-    die "Circular dependency detected $1 <> ${4##* }"
-esac
-fi
+    if [ "${KISS_FORCE:-0}" != 1 ]; then
+    pattern="* ${4##* } * $1 * ${4##* } * $1 * ${4##* } * $1 * ${4##* } * $1 * ${4##* } * $1 *"
+    case " $4 " in
+    $pattern) die "Circular dependency detected $1 <> ${4##* }" ;;
+    esac
+    fi
 
     # Packages which exist and have depends.
     ! _pkg_find "$1" || ! [ -e "$repo_dir/depends" ] ||
@@ -2323,7 +2319,7 @@ main() {
 "
 
     # Defaults for environment variables.
-    : "${KISS_COMPRESS:=gz}"
+    : "${KISS_COMPRESS:=zstd}"
     : "${KISS_PID:=$$}"
     : "${LOGNAME:?POSIX requires LOGNAME be set}"
 
