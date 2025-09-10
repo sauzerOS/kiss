@@ -30,8 +30,8 @@
 # SOFTWARE.
 
 
-# Parse /etc/kiss/flags for default environment variables, but allow env to take precedence
-if [ -f /etc/kiss/flags ]; then
+# Parse /etc/kiss/kiss.conf for default environment variables, but allow env to take precedence
+if [ -f /etc/kiss/kiss.conf ]; then
     # shellcheck disable=SC1091
     while IFS='=' read -r var val; do
         # Skip empty lines and comments
@@ -42,7 +42,7 @@ if [ -f /etc/kiss/flags ]; then
         if [ "$var" != "BIG_PKGS" ] && [ -z "${!var}" ]; then
             export "$var=$val"
         fi
-    done < /etc/kiss/flags
+    done < /etc/kiss/kiss.conf
 fi
 
 
@@ -277,53 +277,6 @@ _b3() {
     unset IFS
 }
 
-sh256() {
-    # Higher level sh256 function which filters out non-existent
-    # files (and also directories).
-    for f do shift
-        [ -d "$f" ] || [ ! -e "$f" ] || set -- "$@" "$f"
-    done
-
-    _sh256 "$@"
-}
-
-_sh256() {
-    # There's no standard utility to generate sha256 checksums.
-    # This is a simple wrapper around sha256sum, sha256, shasum,
-    # openssl, digest, ... which will use whatever is available.
-    #
-    # All utilities must match 'sha256sum' output.
-    #
-    # Example: '<checksum>  <file>'
-    unset hash
-
-    # Skip generation if no arguments.
-    ! equ "$#" 0 || return 0
-
-    # Set the arguments based on found sha256 utility.
-    case ${cmd_sha##*/} in
-        openssl) set -- dgst -sha256 -r "$@" ;;
-         sha256) set -- -r "$@" ;;
-         shasum) set -- -a 256 "$@" ;;
-         digest) set -- -a sha256 "$@" ;;
-    esac
-
-    IFS=$newline
-
-    # Generate checksums for all input files. This is a single
-    # call to the utility rather than one per file.
-    _hash=$("$cmd_sha" "$@") || die "Failed to generate checksums"
-
-    # Strip the filename from each element.
-    # '<checksum> ?<file>' -> '<checksum>'
-    for sum in $_hash; do
-        hash=$hash${hash:+"$newline"}${sum%% *}
-    done
-
-    printf '%s\n' "$hash"
-    unset IFS
-}
-
 pkg_find_version() {
     ver_pre=$repo_ver
     rel_pre=$repo_rel
@@ -465,14 +418,20 @@ pkg_source() {
         resolved_dest="$_des"
 
         # Skip git handling if called from 'kiss c'
-        case $2$_res in
-            "$2url+"*|git+*)
-                [ "$2" ] && continue  # Skip if $2 is set (checksum mode)
-                mkcd "${resolved_dest%/*}"
-                "pkg_source_${_res%%+*}" "$resolved_dest" "${_res##"${_res%%+*}+"}"
-                continue
-            ;;
-        esac
+        case $_res in
+        git+*)
+        [ "$2" ] && continue  # Skip git in checksum mode
+        mkcd "${resolved_dest%/*}"
+        "pkg_source_${_res%%+*}" "$resolved_dest" "${_res##"${_res%%+*}+"}"
+        continue
+        ;;
+        url+*)
+        # Always resolve URL sources, even in checksum mode
+        mkcd "${resolved_dest%/*}"
+        "pkg_source_${_res%%+*}" "$resolved_dest" "${_res##"${_res%%+*}+"}"
+        continue
+    ;;
+    esac
 
         # Handle regular HTTP/HTTPS sources
         if printf '%s' "$src" | grep -qE '^https?://'; then
@@ -539,49 +498,35 @@ pkg_source_url() {
 }
 
 pkg_source_git() {
-    repo="$1"
-    url="${2%[#@]*}"
-    com="${2##*[@#]}"
-    com="${com#"${2%[#@]*}"}"
-    com="${com:-HEAD}"
+    repo="$1"  # Destination directory
+    full_url="$2"  # URL with optional #ref
+    ref="${3:-HEAD}"  # Optional override from caller
 
-    log "$repo_name" "Fetching git repo: $url"
-    log "$repo_name" "Checking out ${com:-FETCH_HEAD}"
+    # Extract base URL and ref from URL fragment
+    url="${full_url%%#*}"
+    url_ref="${full_url#*#}"
 
-    if [ -d "$repo/.git" ]; then
-        # Repo exists, try to update the exact ref
-        git -C "$repo" config advice.detachedHead false
-        git -C "$repo" fetch --tags --prune origin "$com" || {
-            log "$repo_name" "Failed to fetch update, recloning..."
-            rm -rf "$repo"
-        }
-    fi
+    # If no #ref was present, fallback to $ref or HEAD
+    [ "$url" = "$full_url" ] && url_ref="$ref"
 
+    # If repo doesn't exist or isn't a valid git repo, clone it
     if [ ! -d "$repo/.git" ]; then
-        # Clone fresh if missing or removed
-        git -C "$repo" config advice.detachedHead false
-        git clone --no-checkout "$url" "$repo" || {
-            log "$repo_name" "Failed to clone repo"
-            return 1
-        }
-        git -C "$repo" fetch --tags --prune origin "$com" || {
-            log "$repo_name" "Failed to fetch $com"
-            return 1
-        }
+        rm -rf "$repo"  # Clean up any broken state
+        cd "$(dirname "$repo")" # Avoid deleting $(pwd)
+        git clone "$url" "$repo" || die "Failed to clone $url"
     fi
 
-    # Checkout and hard reset to the fetched commit
-    git -C "$repo" config advice.detachedHead false
-    git -C "$repo" checkout FETCH_HEAD || {
-        log "$repo_name" "Failed to checkout $com"
-        return 1
-    }
-    git -C "$repo" reset --hard FETCH_HEAD || {
-        log "$repo_name" "Failed to reset to fetched commit"
-        return 1
-    }
-}
+    cd "$repo" || die "Failed to enter repo directory: $repo"
 
+    # Disable detached HEAD warning
+    git config advice.detachedHead false
+
+    # Fetch all refs to ensure tag/commit is available
+    git fetch --all --tags --quiet
+
+    # Checkout the requested ref (tag, commit, or branch)
+    git checkout "$url_ref" || die "Failed to checkout $url_ref"
+}
 
 pkg_source_tar() {
     tmp_file "$repo_name" tarball
@@ -1165,6 +1110,9 @@ pkg_build() {
             CXX="${CXX:-c++}" \
             NM="${NM:-nm}" \
             RANLIB="${RANLIB:-ranlib}" \
+            CFLAGS="${CFLAGS:--O2 -march=x86-64 -mtune=generic -pipe -fPIC}" \
+            CXXFLAGS="${CXXFLAGS:-$CFLAGS}" \
+            MAKEFLAGS="${MAKEFLAGS:--j$(nproc)}" \
             RUSTFLAGS="--remap-path-prefix=$PWD=. $RUSTFLAGS" \
             GOFLAGS="-trimpath -modcacherw $GOFLAGS" \
             GOPATH="$PWD/go" \
@@ -1184,6 +1132,8 @@ pkg_build() {
             CXX="${CXX:-c++}" \
             NM="${NM:-nm}" \
             RANLIB="${RANLIB:-ranlib}" \
+            CFLAGS="${CFLAGS:--O2 -march=x86-64 -mtune=generic -pipe -fPIC}" \
+            CXXFLAGS="${CXXFLAGS:-$CFLAGS}" \
             RUSTFLAGS="--remap-path-prefix=$PWD=. $RUSTFLAGS" \
             GOFLAGS="-trimpath -modcacherw $GOFLAGS" \
             GOPATH="$PWD/go" \
@@ -2358,15 +2308,6 @@ main() {
 
     # b3sum is, for now, the only supported blake3 digest utility.
     cmd_b3=b3sum
-
-    # Figure out which sha256 utility is available.
-    cmd_sha=${KISS_CHK:-"$(
-        command -v openssl   ||
-        command -v sha256sum ||
-        command -v sha256    ||
-        command -v shasum    ||
-        command -v digest
-    )"} || war "No sha256 utility found"
 
 
     # Allow user to pick download utility with KISS_DL, else fallback to KISS_GET or auto-detect
