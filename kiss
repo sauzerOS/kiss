@@ -519,7 +519,10 @@ pkg_source_git() {
         git config advice.detachedHead false
         git fetch --all --tags --quiet
         git checkout "$url_ref" || die "Failed to checkout $url_ref"
+        # Only pull if we're on a branch
+        if git rev-parse --abbrev-ref HEAD | grep -vq '^HEAD$'; then
         git pull --ff-only || log "$pkg" "Already up to date"
+        fi
         return
     fi
 
