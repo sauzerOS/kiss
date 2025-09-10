@@ -514,17 +514,18 @@ pkg_source_git() {
         rm -rf "$repo"  # Clean up any broken state
         cd "$(dirname "$repo")" # Avoid deleting $(pwd)
         git clone "$url" "$repo" || die "Failed to clone $url"
+    else
+        cd "$repo" || die "Failed to enter repo directory"
+        git config advice.detachedHead false
+        git fetch --all --tags --quiet
+        git checkout "$url_ref" || die "Failed to checkout $url_ref"
+        git pull --ff-only || log "$pkg" "Already up to date"
+        return
     fi
 
-    cd "$repo" || die "Failed to enter repo directory: $repo"
-
-    # Disable detached HEAD warning
+    cd "$repo" || die "Failed to enter repo directory"
     git config advice.detachedHead false
-
-    # Fetch all refs to ensure tag/commit is available
     git fetch --all --tags --quiet
-
-    # Checkout the requested ref (tag, commit, or branch)
     git checkout "$url_ref" || die "Failed to checkout $url_ref"
 }
 
