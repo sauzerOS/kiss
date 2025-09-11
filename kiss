@@ -722,79 +722,19 @@ should_ignore_rpath() {
 
     return 1
 }
-resolve_needed_lib() {
-    local lib="$1"
-    ldconfig -p | awk -v lib="$lib" '$1 == lib { print $NF; exit }'
-}
-
-process_one_file() {
-    _file=$1; shift
-    local full="$pkg_dir/$repo_name$_file"
-    local -a manifests=( "$@" )
-
-    # Skip non-ELF files early
-    file "$full" | grep -q 'ELF' || return 0
-
-    # Use readelf to get dynamic section
-    local elf
-    elf=$("$cmd_elf" -d "$full" 2>/dev/null) || return 0
-
-    # Skip static binaries (no dynamic section)
-    grep -q 'There is no dynamic section' <<<"$elf" && return 0
-
-    # Optional: check and ignore RPATH/RUNPATH
-    printf '%s\n' "$elf" | while IFS= read -r line; do
-        case "$line" in
-            *"(RPATH)"*|*"(RUNPATH)"*)
-                value=${line##*\[}
-                value=${value%%\]*}
-                should_ignore_rpath "$value" && return 0
-                break
-            ;;
-        esac
-    done
-
-    # Extract DT_NEEDED entries (these are direct deps)
-    printf '%s\n' "$elf" | while IFS= read -r line; do
-        case "$line" in
-            *"(NEEDED)"*)
-                lib=${line##*\[}
-                lib=${lib%%\]*}
-                case "$lib" in
-                    ld-*|lib[cm].so*|libc++.so*|libc++abi.so*|libcrypt.so*|\
-                    libdl.so*|libgcc_s.so*|libmvec.so*|libpthread.so*|\
-                    libresolv.so*|librt.so*|libstdc++.so*|libtrace.so*|\
-                    libunwind.so*|libutil.so*|libxnet.so*|ldd)
-                        continue
-                    ;;
-                esac
-
-                # Use dynamic linker to resolve full path
-                _rpath=$(resolve_needed_lib "$lib")
-
-
-                echo "Direct dep: $lib -> $_rpath" >&2 # Debug
-                [ -n "$_rpath" ] || continue
-
-                # Skip if owned by current package
-                ! pkg_owner -e "$_rpath" manifest || continue
-
-                # Find owner in system DB (use preserved manifests list)
-                ! pkg_owner -e "$_rpath" "${manifests[@]}" || printf '%s\n' "$_owns"
-            ;;
-        esac
-    done
-}
-
-
 
 pkg_fix_deps() {
+    # Dynamically look for missing runtime dependencies by checking each
+    # binary and library with 'ldd'. This catches any extra libraries and or
+    # dependencies pulled in by the package's build suite.
     log "$1" "looking for dependencies (using ${cmd_elf##*/})"
 
+    # Disable console output if quiet mode is enabled and debug mode is not.
     if [ "${KISS_QUIET:-0}" = 1 ] && [ "${KISS_DEBUG:-0}" != 1 ]; then
-        exec 3>&1
-        exec > /dev/null
+    exec 3>&1  # Save stdout
+    exec > /dev/null
     fi
+
 
     tmp_file_copy "$1" depends depends
     tmp_file      "$1" depends-fixed
@@ -802,46 +742,151 @@ pkg_fix_deps() {
     set +f
     set -f -- "$sys_db/"*/manifest
 
-    # Gather candidate files
-    mapfile -t elf_files < <(
-        while read -r _file; do
-            [ -h "$_file" ] && continue
-            case $_file in
-                */sbin/?*[!/]|*/bin/?*[!/]|*/lib/?*[!/]|\
-                */lib??/?*[!/]|*/lib???/?*[!/]|*/lib????/?*[!/])
-                    printf '%s\n' "$_file"
-                ;;
+    unset _fdep_seen
+
+    # False positive (not a write).
+    # shellcheck disable=2094
+    while read -r _file; do [ -h "$_file" ] || case $_file in
+        # Look only in these locations for files of interest (libraries,
+        # programs, etc). This includes all subdirectories. Old behavior
+        # would run ldd on all files (upwards of 4000 for Python).
+        */sbin/?*[!/]|*/bin/?*[!/]|*/lib/?*[!/]|\
+        */lib??/?*[!/]|*/lib???/?*[!/]|*/lib????/?*[!/])
+
+        unset elf
+
+        # Attempt to get information from readelf. If this fails (or we
+        # are in ldd mode), do full ldd mode (which has the downside of
+        # listing dependencies of dependencies (and so on)).
+        case $cmd_elf in *readelf)
+            elf=$("$cmd_elf" -d "$pkg_dir/$repo_name$_file" 2>/dev/null) ||:
+        esac
+
+        # RPATH/RUNPATH allows the binary to set a relative path for the
+        # dynamic loader that might not be present on the rootfs at the time
+        # of installation. So, ignoring it can cause the dependency detector to
+        # wrongly add packages. The problem also exists in reverse when the
+        # package links to a library bundled inside it and present in system paths
+        # aswell, and a package update unbundles it - the package gets a dependency
+        # on itself due to RPATH causing ldd to find the bundled lib.
+        # Example: libnss3.so exists in /usr/lib at the time of installation
+        # But the package links to libnss3 in /usr/lib/PKG/libnss3.so, which is
+        # present only in the build dir. So, KISS wrongly adds the installed nss
+        # as a dependency.
+        # To avoid dealing with this, we just ignore any libraries with RPATH set.
+        # A solution to this could be to just get the NEEDED libs and RPATH with
+        # readelf and resolve the paths ourselves - with adhoc logic for RPATH and
+        # the build dir.
+        # Another solution could be to resolve the dependencies after installation,
+        # but that can cause issues with reinstalling that tarball later on.
+        # https://github.com/kiss-community/kiss/issues/64
+        # https://github.com/kiss-community/repo/issues/97
+        while read -r _ entry_type value; do
+            # Technically RUNPATH is supposed to have a higher priority
+            # than RPATH but a binary that has both RPATH and RUNPATH set,
+            # each with unique values is probably broken...
+            case $entry_type in '(RPATH)'|'(RUNPATH)')
+                value=${value##*\[}
+                value=${value%%\]*}
+
+                should_ignore_rpath "$value" && continue 2
+                # Found RPATH which shouldn't be ignored
+                break
             esac
-        done < manifest
-    )
+        done <<EOF
+$elf
+EOF
 
-    export -f process_one_file
-    export -f resolve_needed_lib
-    export cmd_elf pkg_dir repo_name
-    export -f should_ignore_rpath ok resolve_path pkg_owner
+        # The readelf mode requires ldd's output to resolve the library
+        # path for a given file. If ldd fails, silently skip the file.
+        ldd=$(ldd -- "$pkg_dir/$repo_name$_file" 2>/dev/null) || continue
+        ok "$elf" || elf=$ldd
 
-    # Preserve the manifests list from "$@" before parallel
-    local -a manifests=( "$@" )
+        # Iterate over the output of readelf or ldd, extract file names,
+        # resolve their paths and finally, figure out their owner.
+        while read -r _ entry_type lib; do case $entry_type in '(NEEDED)'|'=>')
+            # readelf: 0x0000 (NEEDED) Shared library: [libjson-c.so.5]
+            lib=${lib##*\[}
+            lib=${lib%%\]*}
 
-    # Run in parallel; pass manifests to each job as extra args
-    printf '%s\n' "${elf_files[@]}" | parallel -j"$(nproc)" --no-notice \
-        process_one_file {} "${manifests[@]}" >> "$_tmp_file_pre"
+            # Resolve library path. It is already resolved for ldd in the 'lib' field
+            # ldd: libjson-c.so.5 => /lib/libjson-c.so.5 ...
+            case $cmd_elf in *readelf)
+                lib=${ldd#*"	$lib => "}
+                # Remove prefix, else the file will not be owned by any
+                # package in the pkg_owner check below
+                lib=${lib#"$pkg_dir/$repo_name"}
+            esac
 
-    # Deduplicate and finish (no stdin hang)
-    sort -uk1,1 "$_tmp_file_pre" > "$_tmp_file"
+            lib=${lib%% *}
 
+            # Skip files owned by libc, libc++ and POSIX.
+            case ${lib##*/} in
+                ld-*           |\
+                lib[cm].so*    |\
+                libc++.so*     |\
+                libc++abi.so*  |\
+                libcrypt.so*   |\
+                libdl.so*      |\
+                libgcc_s.so*   |\
+                libmvec.so*    |\
+                libpthread.so* |\
+                libresolv.so*  |\
+                librt.so*      |\
+                libstdc++.so*  |\
+                libtrace.so*   |\
+                libunwind.so*  |\
+                libutil.so*    |\
+                libxnet.so*    |\
+                ldd)
+                    continue
+            esac
+
+            # Skip files we have seen before.
+            case " $_fdep_seen " in
+                *" $lib "*) continue ;;
+                *) _fdep_seen="$_fdep_seen $lib"
+            esac
+
+            resolve_path "$lib"
+
+            # Skip file if owned by current package
+            ! pkg_owner -e "$_rpath" manifest ||
+                continue
+
+            ! pkg_owner -e "$_rpath" "$@" ||
+                printf '%s\n' "$_owns"
+
+        esac done <<EOF || :
+$elf
+EOF
+    esac done < manifest |
+
+    # Sort the depends file (including the existing depends file) and
+    # remove any duplicate entries. This can't take into account comments
+    # so they remain rather than being replaced.
+    sort -uk1,1 "$_tmp_file_pre" - > "$_tmp_file"
+
+    # If the depends file was modified, show a diff and replace it.
     ! [ -s "$_tmp_file" ] || {
         diff -U 3 "$_tmp_file_pre" "$_tmp_file" 2>/dev/null || :
+
+        # Replace the existing depends file if one exists, otherwise this
+        # just moves the file to its final resting place.
         mv -f "$_tmp_file" depends
+
+        # Generate a new manifest as we may be the creator of the depends
+        # file. This could otherwise be implemented by inserting a line
+        # at the correct place in the existing manifest.
         pkg_manifest "${PWD##*/}" "$pkg_dir"
     }
 
+    # Restore stdout if it was redirected to /dev/null.
     if [ "${KISS_QUIET:-0}" = 1 ] && [ "${KISS_DEBUG:-0}" != 1 ]; then
-        exec >&3
-        exec 3>&-
-    fi
+    exec >&3  
+    exec 3>&-
+fi
 }
-
 
 pkg_manifest() {
     # Generate the package's manifest file. This is a list of each file
@@ -2039,17 +2084,7 @@ args() {
         c|checksum)     for pkg do pkg_checksum "$pkg"; done ;;
         d|download)     for pkg do pkg_source "$pkg"; done ;;
         H|help-ext)     pkg_help_ext "$@" ;;
-        i|install)
-            for pkg; do
-                pkg_install "$pkg"
-            done
-
-            # Run ldconfig if running as root and ldconfig exists
-            if [ "$(id -u)" -eq 0 ] && command -v ldconfig >/dev/null; then
-                echo "🔧 Updating linker cache (ldconfig)..."
-                ldconfig
-            fi
-            ;;
+        i|install)      for pkg do pkg_install "$pkg"; done ;;
         l|list)         pkg_list_version "$@" ;;
         p|preferred)    pkg_preferred "$@" ;;
         r|remove)       for pkg in $redro; do pkg_remove "$pkg"; done ;;
@@ -2127,57 +2162,73 @@ create_tmp_dirs() {
 }
 
 pkg_libdeps() {
-    # Generate a list of shared library dependencies for a package
-    # Combined with pkg_check_removed_libs() we should get a warning if a package update
-    # removes libraries that are still needed by other installed packages.
     log "$1" "Generating libdeps file"
 
     tmp_file "$1" libdeps
     libdeps_file="$_tmp_file"
-    while read -r file; do
-    file="${file#/}"  # Normalize path
-    full_path="$pkg_dir/$1/$file"
-    [ -h "$full_path" ] && continue
 
-    case $file in
-        */bin/*|*/sbin/*|*/lib/*|*/lib??/*|*/lib???/*)
-    # Check if it's an ELF binary
-    if head -c 4 "$full_path" 2>/dev/null | grep -q $'\x7fELF'; then
-    deps=$(ldd "$full_path" 2>/dev/null | awk '/=>/ {print $3}' | grep -vE '^(\s*$|not found)' || true)
-    for dep in $deps; do
-        lib="${dep##*/}"
-        case $lib in
-            ld-*           |\
-            lib[cm].so*    |\
-            libc++.so*     |\
-            libc++abi.so*  |\
-            libcrypt.so*   |\
-            libdl.so*      |\
-            libgcc_s.so*   |\
-            libmvec.so*    |\
-            libpthread.so* |\
-            libresolv.so*  |\
-            librt.so*      |\
-            libstdc++.so*  |\
-            libtrace.so*   |\
-            libunwind.so*  |\
-            libutil.so*    |\
-            libxnet.so*    )
-                continue
-            ;;
-        esac
-        echo "$dep" >> "$libdeps_file"
-    done
-    fi
-            ;;
-        esac
-    done < "$pkg_dir/$1/$pkg_db/$1/manifest"
+    # Collect candidate ELF files from manifest
+    mapfile -t elf_files < <(
+        while read -r file; do
+            file="${file#/}"  # Normalize path
+            full_path="$pkg_dir/$1/$file"
+            [ -h "$full_path" ] && continue
+            case $file in
+                */bin/*|*/sbin/*|*/lib/*|*/lib??/*|*/lib???/*)
+                    # Quick ELF magic check
+                    if head -c 4 "$full_path" 2>/dev/null | grep -q $'\x7fELF'; then
+                        printf '%s\n' "$full_path"
+                    fi
+                ;;
+            esac
+        done < "$pkg_dir/$1/$pkg_db/$1/manifest"
+    )
+
+    # Export filter function for parallel
+    _pkg_libdeps_one() {
+        local full_path=$1
+        ldd "$full_path" 2>/dev/null |
+        awk '/=>/ {print $3}' |
+        grep -vE '^(\s*$|not found)' |
+        while read -r dep; do
+            local lib="${dep##*/}"
+            case $lib in
+                ld-*           |\
+                lib[cm].so*    |\
+                libc++.so*     |\
+                libc++abi.so*  |\
+                libcrypt.so*   |\
+                libdl.so*      |\
+                libgcc_s.so*   |\
+                libmvec.so*    |\
+                libpthread.so* |\
+                libresolv.so*  |\
+                librt.so*      |\
+                libstdc++.so*  |\
+                libtrace.so*   |\
+                libunwind.so*  |\
+                libutil.so*    |\
+                libxnet.so*    )
+                    continue
+                ;;
+            esac
+            printf '%s\n' "$dep"
+        done
+    }
+    export -f _pkg_libdeps_one
+
+    # Run in parallel and collect results
+    printf '%s\n' "${elf_files[@]}" |
+        parallel -j"$(nproc)" --no-notice _pkg_libdeps_one {} \
+        > "$libdeps_file"
 
     # Sort and deduplicate
     sort -u "$libdeps_file" -o "$pkg_dir/$1/$pkg_db/$1/libdeps"
+
     # Include in manifest
     echo "/$pkg_db/$1/libdeps" >> "$pkg_dir/$1/$pkg_db/$1/manifest"
 }
+
 
 pkg_check_removed_libs() {
     # Skip if we are already rebuilding affected packages
