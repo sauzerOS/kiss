@@ -47,6 +47,9 @@ if [ -f /etc/kiss/kiss.conf ]; then
     done < /etc/kiss/kiss.conf
 fi
 
+# Make sure KISS_RAMDISK is set to a valid value
+: "${KISS_RAMDISK:=/tmp/kiss/}"
+
 # Read BIG_PKGS from /etc/kiss/BIG_PKGS if it exists
 if [ -f /etc/kiss/BIG_PKGS ]; then
     BIG_PKGS="$(cat /etc/kiss/BIG_PKGS)"
@@ -646,63 +649,43 @@ pkg_order() {
 }
 
 pkg_strip() {
-    # Strip package binaries and libraries. This saves space on the system as
-    # well as on the tarballs we ship for installation.
-    [ -f "$mak_dir/$pkg/nostrip" ] || equ "$KISS_STRIP" 0 && return
+    [ -f "$mak_dir/$pkg/nostrip" ] || [ "${KISS_STRIP:-1}" -eq 0 ] && return
 
     log "$1" "Stripping binaries and libraries"
 
-    # Disable console output if quiet mode is enabled and debug mode is not.
-    if [ "${KISS_QUIET:-0}" = 1 ] && [ "${KISS_DEBUG:-0}" != 1 ]; then
-    exec 3>&1  # Save stdout
-    exec > /dev/null
+    # Suppress output if in quiet mode (unless in debug mode)
+    if [ "${KISS_QUIET:-0}" -eq 1 ] && [ "${KISS_DEBUG:-0}" -ne 1 ]; then
+        exec 3>&1
+        exec >/dev/null
     fi
 
-    # Strip only files matching the below ELF types. This uses 'od' to print
-    # the first 18 bytes of the file. This is the location of the ELF header
-    # (up to the ELF type) and contains the type information we need.
-    #
-    # Static libraries (.a) are in reality AR archives which contain ELF
-    # objects. We simply read from the same 18 bytes and assume that the AR
-    # header equates to an archive containing objects (.o).
-    #
-    # Example ELF output ('003' is ELF type):
-    # 0000000 177   E   L   F 002 001 001  \0  \0  \0  \0  \0  \0  \0  \0  \0
-    # 0000020 003  \0
-    # 0000022
-    #
-    # Example AR output (.a):
-    # 0000000   !   <   a   r   c   h   >  \n   /
-    # 0000020
-    # 0000022
-    while read -r file; do [ -h "$pkg_dir/$1$file" ] || case $file in
-        # Look only in these locations for files of interest (libraries,
-        # programs, etc). This includes all subdirectories. Old behavior
-        # would run od on all files (upwards of 4000 for Python).
-        */sbin/?*[!/]|*/bin/?*[!/]|*/lib/?*[!/]|\
-        */lib??/?*[!/]|*/lib???/?*[!/]|*/lib????/?*[!/])
+    dir="$pkg_dir/$1"
 
-        case $(od -A o -t c -N 18 "$pkg_dir/$1$file") in
-            # REL (object files (.o), static libraries (.a)).
-            *177*E*L*F*0000020\ 001\ *|*\!*\<*a*r*c*h*\>*)
-                run strip -g -R .comment -R .note "$pkg_dir/$1$file"
-            ;;
-
-            # EXEC (binaries), DYN (shared libraries).
-            # Shared libraries keep global symbols in a separate ELF section
-            # called '.dynsym'. '--strip-all/-s' does not touch the dynamic
-            # symbol entries which makes this safe to do.
-            *177*E*L*F*0000020\ 00[23]\ *)
-                run strip -s -R .comment -R .note "$pkg_dir/$1$file"
+    find "$dir" -type f -print0 | \
+    xargs -0 -n1 -P"$(nproc)" -I{} bash -c '
+        f="{}"
+        desc=$(file -b "$f")
+        rel="${f#'"$dir"'/}"
+        case "$desc" in
+            *ELF*)
+                if [[ "$desc" == *"relocatable"* || "$desc" == *"archive"* ]]; then
+                    printf "  -> Stripping (reloc): %s\n" "$rel"
+                    strip -g -R .comment -R .note "$f"
+                else
+                    printf "  -> Stripping: %s\n" "$rel"
+                    strip -s -R .comment -R .note "$f"
+                fi
             ;;
         esac
-    esac done < "$pkg_dir/$1/$pkg_db/$1/manifest" || :
-    # Restore stdout if it was redirected to /dev/null.
-    if [ "${KISS_QUIET:-0}" = 1 ] && [ "${KISS_DEBUG:-0}" != 1 ]; then
-    exec >&3  
-    exec 3>&-
+    '
+
+    # Restore output if quiet mode was enabled
+    if [ "${KISS_QUIET:-0}" -eq 1 ] && [ "${KISS_DEBUG:-0}" -ne 1 ]; then
+        exec >&3
+        exec 3>&-
     fi
 }
+
 
 should_ignore_rpath() {
     # Intentional, globbing disabled.
