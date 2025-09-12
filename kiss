@@ -662,7 +662,7 @@ pkg_strip() {
     dir="$pkg_dir/$1"
 
     find "$dir" -type f -print0 | \
-    xargs -0 -n1 -P"$(nproc)" -I{} bash -c '
+    xargs -0 -P"$(nproc)" -I{} bash -c '
         f="{}"
         desc=$(file -b "$f")
         rel="${f#'"$dir"'/}"
@@ -770,8 +770,6 @@ process_one_file() {
     done
 }
 
-
-
 pkg_fix_deps() {
     log "$1" "looking for dependencies (using ${cmd_elf##*/})"
 
@@ -799,26 +797,37 @@ pkg_fix_deps() {
         done < manifest
     )
 
-    export -f process_one_file
-    export -f resolve_needed_lib
+    export -f process_one_file resolve_needed_lib should_ignore_rpath ok resolve_path pkg_owner
     export cmd_elf pkg_dir repo_name
-    export -f should_ignore_rpath ok resolve_path pkg_owner
 
-    # Preserve the manifests list from "$@" before parallel
+    # Preserve manifest list in a local array
     local -a manifests=( "$@" )
+    local jobs=$(nproc)
 
-    # Run in parallel; pass manifests to each job as extra args
-    printf '%s\n' "${elf_files[@]}" | parallel -j"$(nproc)" --no-notice \
-        process_one_file {} "${manifests[@]}" >> "$_tmp_file_pre"
+    # Use xargs to run jobs in parallel, one file per invocation.
+    # We pass the manifests array as “initial args” so it ends up
+    # before the filename ($f ends up being the last param).
+    printf '%s\0' "${elf_files[@]}" \
+      | xargs -0 -n1 -P "$jobs" bash -c '
+          # inside this -c script:
+          #   $0 = "_"
+          #   $1…$N-1 = the manifests
+          #   $N = the filename
+          f="${@: -1}"
+          # reset $@ to just the manifests
+          set -- "${@:1:$(($#-1))}"
+          process_one_file "$f" "$@"
+        ' _ "${manifests[@]}" \
+        >> "$_tmp_file_pre"
 
-    # Deduplicate and finish (no stdin hang)
+    # Dedupe and finish
     sort -uk1,1 "$_tmp_file_pre" > "$_tmp_file"
 
-    ! [ -s "$_tmp_file" ] || {
+    if [ -s "$_tmp_file" ]; then
         diff -U 3 "$_tmp_file_pre" "$_tmp_file" 2>/dev/null || :
         mv -f "$_tmp_file" depends
         pkg_manifest "${PWD##*/}" "$pkg_dir"
-    }
+    fi
 
     if [ "${KISS_QUIET:-0}" = 1 ] && [ "${KISS_DEBUG:-0}" != 1 ]; then
         exec >&3
@@ -2125,7 +2134,7 @@ pkg_libdeps() {
         done < "$pkg_dir/$1/$pkg_db/$1/manifest"
     )
 
-    # Export filter function for parallel
+    # Helper function: parse libs from a single file
     _pkg_libdeps_one() {
         local full_path=$1
         ldd "$full_path" 2>/dev/null |
@@ -2156,12 +2165,13 @@ pkg_libdeps() {
             printf '%s\n' "$dep"
         done
     }
+
     export -f _pkg_libdeps_one
 
-    # Run in parallel and collect results
-    printf '%s\n' "${elf_files[@]}" |
-        parallel -j"$(nproc)" --no-notice _pkg_libdeps_one {} \
-        > "$libdeps_file"
+    # Use xargs to run in parallel
+    printf '%s\0' "${elf_files[@]}" | \
+        xargs -0 -P"$(nproc)" -I{} bash -c '_pkg_libdeps_one "$1"' _ {} \
+        >> "$libdeps_file"
 
     # Sort and deduplicate
     sort -u "$libdeps_file" -o "$pkg_dir/$1/$pkg_db/$1/libdeps"
@@ -2169,7 +2179,6 @@ pkg_libdeps() {
     # Include in manifest
     echo "/$pkg_db/$1/libdeps" >> "$pkg_dir/$1/$pkg_db/$1/manifest"
 }
-
 
 pkg_check_removed_libs() {
     # Skip if we are already rebuilding affected packages
