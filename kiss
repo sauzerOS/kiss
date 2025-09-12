@@ -506,16 +506,16 @@ pkg_source_url() {
         fi
         tries=$((tries+1))
         echo "→ $cmd_get failed, retrying ($tries/3)..."
-        sleep 3
+        sleep 1
     done
 
-    # fallback to curl if all retries fail and curl is available
-    if [ $success -eq 0 ] && command -v curl >/dev/null 2>&1; then
-        echo "→ Falling back to curl..."
-        if curl -fLo "$@"; then
-            success=1
-        fi
+# fallback to curl if all retries fail and curl is available
+if [ $success -eq 0 ] && command -v curl >/dev/null 2>&1; then
+    echo "→ Falling back to curl..."
+    if curl -fLo "$download_dest" "$download_source"; then
+        success=1
     fi
+fi
 
     if [ $success -eq 0 ]; then
         rm -f "$_tmp_file"
@@ -784,8 +784,6 @@ process_one_file() {
                 # Use dynamic linker to resolve full path
                 _rpath=$(resolve_needed_lib "$lib")
 
-
-                echo "Direct dep: $lib -> $_rpath" >&2 # Debug
                 [ -n "$_rpath" ] || continue
 
                 # Skip if owned by current package
@@ -1456,14 +1454,16 @@ pkg_install_files() {
         # -rltD: recurse, links, times, devices/specials
         # --no-owner/--no-group: don't chown/chgrp
         # (no --perms, no --chmod, no --inplace)
-        rsync -rltD --no-owner --no-group \
+        rsync -rltD --no-owner --no-group --keep-dirlinks \
               "$stage_dir"/ "$KISS_ROOT"/
 
     elif [ "$mode" = "-e" ]; then
         # Second pass: only fill in missing/older files; don't restage
         [ -d "$stage_dir" ] || return 0
-        rsync -rltD --no-owner --no-group --update \
+        rsync -rltD --no-owner --no-group --update --keep-dirlinks \
               "$stage_dir"/ "$KISS_ROOT"/
+    # Cleanup stage dir
+    rm -rf -- "$stage_dir"
     fi
 }
 
