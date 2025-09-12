@@ -28,7 +28,7 @@
 # LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
-KISS_VERSION="0.7"
+KISS_VERSION="0.8"
 
 # Track build time
 _build_start=$(date +%s)
@@ -497,10 +497,30 @@ pkg_source_url() {
         wget|wget2) set -- -O       "$@" ;;
     esac
 
-    "$cmd_get" "$@" || {
+ success=0
+    tries=0
+    while [ $tries -lt 3 ]; do
+        if "$cmd_get" "$@"; then
+            success=1
+            break
+        fi
+        tries=$((tries+1))
+        echo "→ $cmd_get failed, retrying ($tries/3)..."
+        sleep 3
+    done
+
+    # fallback to curl if all retries fail and curl is available
+    if [ $success -eq 0 ] && command -v curl >/dev/null 2>&1; then
+        echo "→ Falling back to curl..."
+        if curl -fLo "$@"; then
+            success=1
+        fi
+    fi
+
+    if [ $success -eq 0 ]; then
         rm -f "$_tmp_file"
         die "$repo_name" "Failed to download $download_source"
-    }
+    fi
 
     mv "$_tmp_file" "$download_dest"
 }
@@ -2212,6 +2232,17 @@ pkg_check_removed_libs() {
     # Filter out plain .so libs
     grep -vE '\.so$' "$removed_libs" > "$removed_libs.filtered" || true
     removed_libs="$removed_libs.filtered"
+    
+    # Backup removed libs if any
+    if [ -s "$removed_libs" ]; then
+        backup_dir="$KISS_TMPDIR/kiss-lib-backup"
+        mkdir -p "$backup_dir"
+        while read -r lib; do
+            [ -f "$lib" ] || continue
+            echo "→ Backing up removed library: $lib"
+            cp -a "$lib" "$backup_dir/"
+        done < "$removed_libs"
+    fi
 }
 
 pkg_prompt_rebuilds() {
@@ -2242,7 +2273,21 @@ pkg_prompt_rebuilds() {
 
         if [ "$reply" = "y" ] || [ "$reply" = "Y" ]; then
             echo "→ Rebuilding affected packages..."
-            KISS_NO_REBUILD_PROMPT=1 kiss b "${affected_pkgs[@]}"
+            KISS_NO_REBUILD_PROMPT=1
+        # Ensure old libs are available at runtime only
+        if [ -d "$backup_dir" ]; then
+        export LD_LIBRARY_PATH="$backup_dir:$LD_LIBRARY_PATH"
+        echo "→ Temporarily adding $backup_dir to LD_LIBRARY_PATH"
+        fi
+
+        kiss b "${affected_pkgs[@]}"
+
+        # Cleanup
+        if [ -d "$backup_dir" ]; then
+        echo "→ Cleaning up backup libraries"
+        rm -rf "$backup_dir"
+        unset LD_LIBRARY_PATH
+            fi
         fi
     fi
 }
