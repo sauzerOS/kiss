@@ -28,6 +28,7 @@
 # LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
+KISS_VERSION="0.7"
 
 # Track build time
 _build_start=$(date +%s)
@@ -54,6 +55,13 @@ fi
 if [ -f /etc/kiss/BIG_PKGS ]; then
     BIG_PKGS="$(cat /etc/kiss/BIG_PKGS)"
 fi
+
+# Enable version output
+if [ "$1" = "--version" ]; then
+    echo "kiss version v$KISS_VERSION"
+    exit 0
+fi
+
 
 log() {
     printf '%b%s %b%s%b %s\n' \
