@@ -1107,6 +1107,7 @@ pkg_build() {
         CFLAGS="${CFLAGS:--O2 -march=x86-64 -mtune=generic -pipe -fPIC}" \
         CXXFLAGS="${CXXFLAGS:-$CFLAGS}" \
         MAKEFLAGS="${MAKEFLAGS:--j$(nproc)}" \
+        LDFLAGS="${LDFLAGS:--Wl,-O1,--sort-common,--as-needed,-z,relro,-z,now}" \
         RUSTFLAGS="--remap-path-prefix=$PWD=. $RUSTFLAGS" \
         GOFLAGS="-trimpath -modcacherw $GOFLAGS" \
         GOPATH="$PWD/go" \
@@ -1123,6 +1124,7 @@ pkg_build() {
         CFLAGS="${CFLAGS:--O2 -march=x86-64 -mtune=generic -pipe -fPIC}" \
         CXXFLAGS="${CXXFLAGS:-$CFLAGS}" \
         MAKEFLAGS="${MAKEFLAGS:--j$(nproc)}" \
+        LDFLAGS="${LDFLAGS:--Wl,-O1,--sort-common,--as-needed,-z,relro,-z,now}" \
         RUSTFLAGS="--remap-path-prefix=$PWD=. $RUSTFLAGS" \
         GOFLAGS="-trimpath -modcacherw $GOFLAGS" \
         GOPATH="$PWD/go" \
