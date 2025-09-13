@@ -669,7 +669,7 @@ pkg_order() {
 }
 
 pkg_strip() {
-    set +x # disable exit on error
+    set +e # disable exit on error
     [ -f "$mak_dir/$pkg/nostrip" ] || [ "${KISS_STRIP:-1}" -eq 0 ] && return
 
     log "$1" "Stripping binaries and libraries"
@@ -699,7 +699,7 @@ pkg_strip() {
             ;;
         esac
     '
-    set -x # restore exit on error
+    set -e # restore exit on error
     # Restore output if quiet mode was enabled
     if [ "${KISS_QUIET:-0}" -eq 1 ] && [ "${KISS_DEBUG:-0}" -ne 1 ]; then
         exec >&3
