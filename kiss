@@ -53,8 +53,8 @@ fi
 # Read BIG_PKGS from /etc/kiss/BIG_PKGS if it exists
 if [ -f /etc/kiss/BIG_PKGS ]; then
     BIG_PKGS="$(cat /etc/kiss/BIG_PKGS)"
+    echo BIG_PKGS is  $BIG_PKGS
 fi
-
 log() {
     printf '%b%s %b%s%b %s\n' \
         "$c1" "${3:-->}" "${c3}${2:+$c2}" "$1" "$c3" "$2" >&2
@@ -501,13 +501,15 @@ pkg_source_url() {
         sleep 1
     done
 
-# fallback to curl if all retries fail and curl is available
-if [ $success -eq 0 ] && command -v curl >/dev/null 2>&1; then
+    # fallback to curl if all retries fail and curl is available
+    if [ $success -eq 0 ] && command -v curl >/dev/null 2>&1; then
     echo "→ Falling back to curl..."
-    if curl -fLo "$download_dest" "$download_source"; then
+    if curl -fLo "$_tmp_file" "$download_source"; then
+        mv -f "$_tmp_file" "$download_dest"
         success=1
     fi
-fi
+    fi
+
 
     if [ $success -eq 0 ]; then
         rm -f "$_tmp_file"
@@ -1107,7 +1109,6 @@ pkg_build() {
         CFLAGS="${CFLAGS:--O2 -march=x86-64 -mtune=generic -pipe -fPIC}" \
         CXXFLAGS="${CXXFLAGS:-$CFLAGS}" \
         MAKEFLAGS="${MAKEFLAGS:--j$(nproc)}" \
-        LDFLAGS="${LDFLAGS:--Wl,-O1,--sort-common,--as-needed,-z,relro,-z,now}" \
         RUSTFLAGS="--remap-path-prefix=$PWD=. $RUSTFLAGS" \
         GOFLAGS="-trimpath -modcacherw $GOFLAGS" \
         GOPATH="$PWD/go" \
@@ -1124,7 +1125,6 @@ pkg_build() {
         CFLAGS="${CFLAGS:--O2 -march=x86-64 -mtune=generic -pipe -fPIC}" \
         CXXFLAGS="${CXXFLAGS:-$CFLAGS}" \
         MAKEFLAGS="${MAKEFLAGS:--j$(nproc)}" \
-        LDFLAGS="${LDFLAGS:--Wl,-O1,--sort-common,--as-needed,-z,relro,-z,now}" \
         RUSTFLAGS="--remap-path-prefix=$PWD=. $RUSTFLAGS" \
         GOFLAGS="-trimpath -modcacherw $GOFLAGS" \
         GOPATH="$PWD/go" \
@@ -2064,7 +2064,7 @@ args() {
         s|search)       for pkg do pkg_find "$pkg" all; done ;;
         u|update)       pkg_update ;;
         U|upgrade)      pkg_upgrade ;;
-        v|version)      printf '1.1\n' ;; # sauzerOSversion
+        v|version)      printf '1.0\n' ;; # package manager version
 
         '')
             log 'kiss [a|b|c|d|i|l|p|r|s|u|U|v] [pkg]...'
@@ -2309,11 +2309,18 @@ print_build_time() {
 }
 
 main() {
+    # If no package name was passed, infer it from the current directory
+    if [ -z "$2" ]; then
+    pkg_name=$(basename "$PWD")
+    else
+    pkg_name=$2
+    fi
     # Always override for big packages during build, before creating temp dirs
-    if [ "$1" = "b" ] && [ -n "$BIG_PKGS" ] && echo "$BIG_PKGS" | grep -qw -- "$2"; then
-        echo "[INFO] Overriding KISS_TMPDIR $KISS_TMPDIR2 for $2"
+    if [ "$1" = "b" ] && [ -n "$BIG_PKGS" ] && echo "$BIG_PKGS" | grep -qw -- "$pkg_name"; then
+        echo "[INFO] Overriding KISS_TMPDIR $KISS_TMPDIR2 for $pkg_name"
         KISS_TMPDIR=$KISS_TMPDIR2
     fi
+
     # Globally disable globbing and enable exit-on-error.
     set -ef
 
