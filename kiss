@@ -1105,11 +1105,11 @@ pkg_build() {
     # Run the build
     if [ "$suppress_output" -eq 1 ]; then
     {
-        AR="${AR:-ar}" \
+        AR="${AR:-gcc-ar}" \
         CC="${CC:-cc}" \
         CXX="${CXX:-c++}" \
-        NM="${NM:-nm}" \
-        RANLIB="${RANLIB:-ranlib}" \
+        NM="${NM:-gcc-nm}" \
+        RANLIB="${RANLIB:-gcc-ranlib}" \
         CFLAGS="${CFLAGS:--O2 -march=x86-64 -mtune=generic -pipe -fPIC}" \
         CXXFLAGS="${CXXFLAGS:-$CFLAGS}" \
         LDFLAGS="${LDFLAGS:-}" \
@@ -1122,11 +1122,11 @@ pkg_build() {
     } > "$log_file" 2>&1
     else
     {
-        AR="${AR:-ar}" \
+        AR="${AR:-gcc-ar}" \
         CC="${CC:-cc}" \
         CXX="${CXX:-c++}" \
-        NM="${NM:-nm}" \
-        RANLIB="${RANLIB:-ranlib}" \
+        NM="${NM:-gcc-nm}" \
+        RANLIB="${RANLIB:-gcc-ranlib}" \
         CFLAGS="${CFLAGS:--O2 -march=x86-64 -mtune=generic -pipe -fPIC}" \
         CXXFLAGS="${CXXFLAGS:-$CFLAGS}" \
         LDFLAGS="${LDFLAGS:-}" \
