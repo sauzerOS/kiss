@@ -1097,7 +1097,7 @@ pkg_build() {
     # Call the build script, log the output to the terminal and to a file.
     set -o pipefail
     log_file="$log_dir/$1-$time-$KISS_PID"
-     
+
     # Determine if output should be suppressed
     suppress_output=0
     [ "${KISS_QUIET:-0}" = 1 ] && [ "${KISS_DEBUG:-0}" != 1 ] && suppress_output=1
@@ -1112,6 +1112,7 @@ pkg_build() {
         RANLIB="${RANLIB:-ranlib}" \
         CFLAGS="${CFLAGS:--O2 -march=x86-64 -mtune=generic -pipe -fPIC}" \
         CXXFLAGS="${CXXFLAGS:-$CFLAGS}" \
+        LDFLAGS="${LDFLAGS:--Wl,--icf=all -Wl,--as-needed -Wl,-O1 -Wl,--sort-common -Wl,-z,relro -Wl,-z,now -Wl,-z,noexecstack}" \
         MAKEFLAGS="${MAKEFLAGS:--j$(nproc)}" \
         RUSTFLAGS="--remap-path-prefix=$PWD=. $RUSTFLAGS" \
         GOFLAGS="-trimpath -modcacherw $GOFLAGS" \
@@ -1128,6 +1129,7 @@ pkg_build() {
         RANLIB="${RANLIB:-ranlib}" \
         CFLAGS="${CFLAGS:--O2 -march=x86-64 -mtune=generic -pipe -fPIC}" \
         CXXFLAGS="${CXXFLAGS:-$CFLAGS}" \
+        LDFLAGS="${LDFLAGS:--Wl,--icf=all -Wl,--as-needed -Wl,-O1 -Wl,--sort-common -Wl,-z,relro -Wl,-z,now -Wl,-z,noexecstack}" \
         MAKEFLAGS="${MAKEFLAGS:--j$(nproc)}" \
         RUSTFLAGS="--remap-path-prefix=$PWD=. $RUSTFLAGS" \
         GOFLAGS="-trimpath -modcacherw $GOFLAGS" \
