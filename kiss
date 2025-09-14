@@ -1112,7 +1112,7 @@ pkg_build() {
         RANLIB="${RANLIB:-ranlib}" \
         CFLAGS="${CFLAGS:--O2 -march=x86-64 -mtune=generic -pipe -fPIC}" \
         CXXFLAGS="${CXXFLAGS:-$CFLAGS}" \
-        LDFLAGS="${LDFLAGS:--Wl,--icf=all -Wl,--as-needed -Wl,-O1 -Wl,--sort-common -Wl,-z,relro -Wl,-z,now -Wl,-z,noexecstack}" \
+        LDFLAGS="${LDFLAGS:-}" \
         MAKEFLAGS="${MAKEFLAGS:--j$(nproc)}" \
         RUSTFLAGS="--remap-path-prefix=$PWD=. $RUSTFLAGS" \
         GOFLAGS="-trimpath -modcacherw $GOFLAGS" \
@@ -1129,7 +1129,7 @@ pkg_build() {
         RANLIB="${RANLIB:-ranlib}" \
         CFLAGS="${CFLAGS:--O2 -march=x86-64 -mtune=generic -pipe -fPIC}" \
         CXXFLAGS="${CXXFLAGS:-$CFLAGS}" \
-        LDFLAGS="${LDFLAGS:--Wl,--icf=all -Wl,--as-needed -Wl,-O1 -Wl,--sort-common -Wl,-z,relro -Wl,-z,now -Wl,-z,noexecstack}" \
+        LDFLAGS="${LDFLAGS:-}" \
         MAKEFLAGS="${MAKEFLAGS:--j$(nproc)}" \
         RUSTFLAGS="--remap-path-prefix=$PWD=. $RUSTFLAGS" \
         GOFLAGS="-trimpath -modcacherw $GOFLAGS" \
