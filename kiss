@@ -408,6 +408,7 @@ pkg_source_resolve() {
 }
 
 pkg_source() {
+
     pkg_find_version "$1"
 
     [ -f "$repo_dir/sources" ] || return 0
@@ -417,23 +418,7 @@ pkg_source() {
         pkg_source_resolve "$1" "$src" "$dest" "$2"
         resolved_dest="$_des"
 
-        # Skip git handling if called from 'kiss c'
-        case $_res in
-        git+*)
-        [ "$2" ] && continue  # Skip git in checksum mode
-        mkcd "${resolved_dest%/*}"
-        "pkg_source_${_res%%+*}" "$resolved_dest" "${_res##"${_res%%+*}+"}"
-        continue
-        ;;
-        url+*)
-        # Always resolve URL sources, even in checksum mode
-        mkcd "${resolved_dest%/*}"
-        "pkg_source_${_res%%+*}" "$resolved_dest" "${_res##"${_res%%+*}+"}"
-        continue
-    ;;
-    esac
-
-        # Handle regular HTTP/HTTPS sources
+        # First: if this is an HTTP/HTTPS source, try to reuse from cache
         if printf '%s' "$src" | grep -qE '^https?://'; then
             src_filename="${src##*/}"
             own_subdir_file="$src_dir/$1/$src_filename"
@@ -447,13 +432,16 @@ pkg_source() {
                 run_hook post-source "$1" "$src" "$destination"
             }
 
+            # Own subdir
             if [ -f "$own_subdir_file" ]; then
                 log "$1" "Found existing source $src_filename in $own_subdir_file, using it"
                 copy_source "$own_subdir_file" "$resolved_dest"
                 continue
             fi
 
-            found_copy=$(find "$src_dir" -type f -name "$src_filename" ! -path "$own_subdir_file" 2>/dev/null | head -n 1)
+            # Any other subdir
+            found_copy=$(find "$src_dir" -type f -name "$src_filename" 2>/dev/null \
+                         | grep -Fv "$own_subdir_file" | head -n 1)
             if [ -n "$found_copy" ]; then
                 log "$1" "Found existing source $src_filename in $found_copy, copying instead of downloading"
                 copy_source "$found_copy" "$resolved_dest"
@@ -461,10 +449,26 @@ pkg_source() {
             fi
         fi
 
+        # Now handle special source types
+        case $_res in
+            git+*)
+                [ "$2" ] && continue  # Skip git in checksum mode
+                mkcd "${resolved_dest%/*}"
+                pkg_source_${_res%%+*} "$resolved_dest" "${_res##"${_res%%+*}+"}"
+                continue
+                ;;
+            url+*)
+                mkcd "${resolved_dest%/*}"
+                pkg_source_${_res%%+*} "$resolved_dest" "${_res##"${_res%%+*}+"}"
+                continue
+                ;;
+        esac
+
         # Fallback for other source types
         run_hook pre-source "$1" "$src"
         run_hook post-source "$1" "$src" "${resolved_dest:-"$_res"}"
     done < "$repo_dir/sources"
+
 }
 
 pkg_source_url() {
