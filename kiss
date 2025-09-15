@@ -417,37 +417,41 @@ pkg_source() {
     while read -r src dest || ok "$src"; do
         pkg_source_resolve "$1" "$src" "$dest" "$2"
         resolved_dest="$_des"
+        
 
-        # First: if this is an HTTP/HTTPS source, try to reuse from cache
-        if printf '%s' "$src" | grep -qE '^https?://'; then
-            src_filename="${src##*/}"
-            own_subdir_file="$src_dir/$1/$src_filename"
+if printf '%s' "$src" | grep -qE '^https?://'; then
+    # Create a unique cache filename based on URL
+    url_hash=$(printf '%s' "$src" | sha256sum | cut -c1-12)  # short hash for readability
+    src_filename="${src##*/}"
+    cache_filename="${url_hash}_${src_filename}"
 
-            copy_source() {
-                local source_file="$1"
-                local destination="$2"
-                [ -n "$destination" ] || return 0
-                mkdir -p "${destination%/*}"
-                cp -a "$source_file" "$destination"
-                run_hook post-source "$1" "$src" "$destination"
-            }
+    own_subdir_file="$src_dir/$1/$cache_filename"
 
-            # Own subdir
-            if [ -f "$own_subdir_file" ]; then
-                log "$1" "Found existing source $src_filename in $own_subdir_file, using it"
-                copy_source "$own_subdir_file" "$resolved_dest"
-                continue
-            fi
+    copy_source() {
+        local source_file="$1"
+        local destination="$2"
+        [ -n "$destination" ] || return 0
+        mkdir -p "${destination%/*}"
+        cp -a "$source_file" "$destination"
+        run_hook post-source "$1" "$src" "$destination"
+    }
 
-            # Any other subdir
-            found_copy=$(find "$src_dir" -type f -name "$src_filename" 2>/dev/null \
-                         | grep -Fv "$own_subdir_file" | head -n 1)
-            if [ -n "$found_copy" ]; then
-                log "$1" "Found existing source $src_filename in $found_copy, copying instead of downloading"
-                copy_source "$found_copy" "$resolved_dest"
-                continue
-            fi
-        fi
+    # Own subdir
+    if [ -f "$own_subdir_file" ]; then
+        log "$1" "Found existing source $cache_filename in $own_subdir_file, using it"
+        copy_source "$own_subdir_file" "$resolved_dest"
+        continue
+    fi
+
+    # Any other subdir (search by cache filename, not plain filename)
+    found_copy=$(find "$src_dir" -type f -name "$cache_filename" 2>/dev/null \
+                 | grep -Fv "$own_subdir_file" | head -n 1)
+    if [ -n "$found_copy" ]; then
+        log "$1" "Found existing source $cache_filename in $found_copy, copying instead of downloading"
+        copy_source "$found_copy" "$resolved_dest"
+        continue
+    fi
+fi
 
         # Now handle special source types
         case $_res in
