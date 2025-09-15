@@ -523,7 +523,7 @@ pkg_source_url() {
 
     # Set the arguments based on found download utility.
     case ${cmd_get##*/} in
-            aria2c) set --  -Uwget -x3 -s3 --console-log-level=warn -d  / -o  "$@" ;;
+            aria2c) set --  -Uwget -x2 -s2 --console-log-level=warn -d  / -o  "$@" ;;
               axel) set -- -o       "$@" ;;
               curl) set -- -fLo     "$@" ;;
         wget|wget2) set -- -O       "$@" ;;
