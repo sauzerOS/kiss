@@ -389,8 +389,8 @@ pkg_source_resolve() {
             _des="$pkg_path"
 
         else
-            # Only enable central caching for HTTPS URLs.
-            if printf '%s' "$2" | grep -qE '^https://'; then
+            # Only enable central caching for HTTP/FTP URLs.
+            if printf '%s' "$2" | grep -qE '^(https?|ftp)://'; then
                 src_url="$2"
                 src_no_q="${src_url%%\?*}"
                 src_filename="${src_no_q##*/}"
