@@ -1218,6 +1218,7 @@ pkg_checksum() {
 }
 
 pkg_checksum_gen() {
+    
     # Generate checksums for packages.
     #
     # NOTE: repo_ comes from caller.
@@ -1255,8 +1256,9 @@ pkg_checksum_gen() {
                         ln -sf "$cache_file" "$resolved_dest"
                     fi
                 fi
-
+                
                 files="$files $cache_file"
+                echo " https url:files is now $files and cache_file is $cache_file"
                 ;;
 
             url+*)
@@ -1267,11 +1269,13 @@ pkg_checksum_gen() {
                     pkg_source_url "$resolved_dest" "${_res##url+}"
                 fi
                 files="$files $resolved_dest"
+                echo " http/ftp etc url:files is now $files and cache_file is $cache_file"
                 ;;
 
             *)
                 # Local file
-                files="$files $resolved_dest"
+                files="$files $_res"
+                echo " local files is now $files and res is $_res"
                 ;;
         esac
     done < "$repo_dir/sources"
