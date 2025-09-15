@@ -28,7 +28,7 @@
 # LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
-
+set -x
 # Track build time
 _build_start=$(date +%s)
 
@@ -523,7 +523,16 @@ pkg_source_url() {
 
     # Set the arguments based on found download utility.
     case ${cmd_get##*/} in
-            aria2c) set --  -Uwget -x2 -s2 --console-log-level=warn -d  / -o  "$@" ;;
+    aria2c)
+    dest_dir=$(dirname -- "$1")
+    dest_file=$(basename -- "$1")
+    url=$2
+    set -- -Uwget -x5 -s5 --console-log-level=warn \
+           --auto-file-renaming=false \
+           -d "$dest_dir" \
+           -o "$dest_file" \
+           "$url"
+    ;;
               axel) set -- -o       "$@" ;;
               curl) set -- -fLo     "$@" ;;
         wget|wget2) set -- -O       "$@" ;;
