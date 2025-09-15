@@ -377,17 +377,46 @@ pkg_source_resolve() {
         _des=$src_dir/$1/${3:+"$3/"}${2##*/}
         _des=${_des%[@#]*}/
 
-    # Remote source.
+    # Remote source (has scheme like http:// or https://).
     elif null "${2##*://*}"; then
-        # Remote source (cached).
-        # Only check if we detect a remote source to avoid
-        # masking local paths like 'files/test' as cached
-        # if '$src_dir/$1/test' is present
-        if [ -f "$src_dir/$1/${3:+"$3/"}${2##*/}" ]; then
-            _res=$src_dir/$1/${3:+"$3/"}${2##*/}
+        # package-local expected filename
+        pkg_rel="${3:+"$3/"}${2##*/}"
+        pkg_path="$src_dir/$1/$pkg_rel"
+
+        # If file already exists in the package's own dir, use it.
+        if [ -f "$pkg_path" ]; then
+            _res="$pkg_path"
+            _des="$pkg_path"
+
         else
-            _res=url+$2
-            _des=$src_dir/$1/${3:+"$3/"}${2##*/}
+            # Only enable central caching for HTTPS URLs.
+            if printf '%s' "$2" | grep -qE '^https://'; then
+                src_url="$2"
+                src_no_q="${src_url%%\?*}"
+                src_filename="${src_no_q##*/}"
+                [ -n "$src_filename" ] || src_filename="download"
+
+                # short hash to avoid collisions but keep readability
+                url_hash=$(printf '%s' "$src_url" | sha256sum | cut -c1-12)
+                cache_filename="${url_hash}_${src_filename}"
+                cache_file="$src_dir/_cache/$cache_filename"
+
+                if [ -f "$cache_file" ]; then
+                    # Cache hit: ensure package dir exists and symlink the cache into it
+                    mkdir -p "$(dirname "$pkg_path")"
+                    ln -sf "$cache_file" "$pkg_path"
+                    _res="$cache_file"
+                    _des="$pkg_path"
+                else
+                    # Cache miss: signal caller to download into $pkg_path
+                    _res="url+$2"
+                    _des="$pkg_path"
+                fi
+            else
+                # Non-HTTPS remote: leave for normal downloader (unchanged)
+                _res="url+$2"
+                _des="$pkg_path"
+            fi
         fi
 
     # Local relative dir.
@@ -414,7 +443,6 @@ pkg_source_resolve() {
 }
 
 pkg_source() {
-
     pkg_find_version "$1"
 
     [ -f "$repo_dir/sources" ] || return 0
@@ -423,43 +451,7 @@ pkg_source() {
     while read -r src dest || ok "$src"; do
         pkg_source_resolve "$1" "$src" "$dest" "$2"
         resolved_dest="$_des"
-        
 
-if printf '%s' "$src" | grep -qE '^https?://'; then
-    # Create a unique cache filename based on URL
-    url_hash=$(printf '%s' "$src" | sha256sum | cut -c1-12)  # short hash for readability
-    src_filename="${src##*/}"
-    cache_filename="${url_hash}_${src_filename}"
-
-    own_subdir_file="$src_dir/$1/$cache_filename"
-
-    copy_source() {
-        local source_file="$1"
-        local destination="$2"
-        [ -n "$destination" ] || return 0
-        mkdir -p "${destination%/*}"
-        cp -a "$source_file" "$destination"
-        run_hook post-source "$1" "$src" "$destination"
-    }
-
-    # Own subdir
-    if [ -f "$own_subdir_file" ]; then
-        log "$1" "Found existing source $cache_filename in $own_subdir_file, using it"
-        copy_source "$own_subdir_file" "$resolved_dest"
-        continue
-    fi
-
-    # Any other subdir (search by cache filename, not plain filename)
-    found_copy=$(find "$src_dir" -type f -name "$cache_filename" 2>/dev/null \
-                 | grep -Fv "$own_subdir_file" | head -n 1)
-    if [ -n "$found_copy" ]; then
-        log "$1" "Found existing source $cache_filename in $found_copy, copying instead of downloading"
-        copy_source "$found_copy" "$resolved_dest"
-        continue
-    fi
-fi
-
-        # Now handle special source types
         case $_res in
             git+*)
                 [ "$2" ] && continue  # Skip git in checksum mode
@@ -467,7 +459,42 @@ fi
                 pkg_source_${_res%%+*} "$resolved_dest" "${_res##"${_res%%+*}+"}"
                 continue
                 ;;
+
+            url+https://*)
+                [ "$2" ] && continue  # skip in checksum mode
+
+                mkcd "${resolved_dest%/*}"
+                pkg_source_${_res%%+*} "$resolved_dest" "${_res##"${_res%%+*}+"}"
+
+                # ---- cache integration ----
+                src_url="${_res##url+}"
+                src_no_q="${src_url%%\?*}"
+                src_filename="${src_no_q##*/}"
+                [ -n "$src_filename" ] || src_filename="download"
+
+                url_hash=$(printf '%s' "$src_url" | sha256sum | cut -c1-12)
+                cache_filename="${url_hash}_${src_filename}"
+                cache_dir="$src_dir/_cache"
+                cache_file="$cache_dir/$cache_filename"
+
+                # if the file was downloaded, move it into _cache and symlink back
+                if [ -f "$resolved_dest" ]; then
+                    mkdir -p "$cache_dir"
+                    if [ ! -f "$cache_file" ]; then
+                        mv "$resolved_dest" "$cache_file" 2>/dev/null \
+                          || { cp -a "$resolved_dest" "$cache_file" && rm -f "$resolved_dest"; }
+                        log "$1" "Cached $cache_filename"
+                    fi
+
+                    rm -f "$resolved_dest"
+                    ln -s "$cache_file" "$resolved_dest"
+                    log "$1" "Linked cached $cache_filename -> $resolved_dest"
+                fi
+                continue
+                ;;
+
             url+*)
+                [ "$2" ] && continue  # skip in checksum mode
                 mkcd "${resolved_dest%/*}"
                 pkg_source_${_res%%+*} "$resolved_dest" "${_res##"${_res%%+*}+"}"
                 continue
@@ -478,7 +505,6 @@ fi
         run_hook pre-source "$1" "$src"
         run_hook post-source "$1" "$src" "${resolved_dest:-"$_res"}"
     done < "$repo_dir/sources"
-
 }
 
 pkg_source_url() {
@@ -1041,6 +1067,8 @@ pkg_build_all() {
     # dependencies.
     for pkg do
         log "$pkg" "Building package ($((_build_cur+=1))/$#)"
+    # Update terminal/window title
+    printf '\033]0;Building: %s (%s/%s)\007' "$pkg" "$_build_cur" "$#"
 
         pkg_find_version "$pkg"
 
@@ -1169,6 +1197,8 @@ pkg_build() {
     # arg2: package name
     # arg3: path to DESTDIR
     run_hook post-build "$1" "$pkg_dir/$1"
+    # Reset title after success
+    printf '\033]0;Idle\007'
 }
 
 pkg_checksum() {
@@ -1191,15 +1221,62 @@ pkg_checksum_gen() {
     # Generate checksums for packages.
     #
     # NOTE: repo_ comes from caller.
+    files=
     while read -r src dest || ok "$src"; do
         pkg_source_resolve "$repo_name" "$src" "$dest" >/dev/null
+        resolved_dest="$_des"
 
-        case ${_res##git+*} in */*[!.])
-            set -- "$@" "$_res"
+        case $_res in
+            git+*)
+                # skip git repos, they aren't checksummed
+                continue
+                ;;
+
+            url+https://*)
+                src_url="${_res##url+}"
+                src_no_q="${src_url%%\?*}"
+                src_filename="${src_no_q##*/}"
+                [ -n "$src_filename" ] || src_filename="download"
+
+                url_hash=$(printf '%s' "$src_url" | sha256sum | cut -c1-12)
+                cache_filename="${url_hash}_${src_filename}"
+                cache_file="$src_dir/_cache/$cache_filename"
+
+                # Download if missing
+                if [ ! -f "$cache_file" ]; then
+                    log "$repo_name" "Downloading source for checksum: $src_url"
+                    mkdir -p "${resolved_dest%/*}" "$src_dir/_cache"
+                    pkg_source_url "$resolved_dest" "$src_url"
+
+                    # Move into cache and symlink back
+                    if [ -f "$resolved_dest" ]; then
+                        mv "$resolved_dest" "$cache_file" 2>/dev/null \
+                          || { cp -a "$resolved_dest" "$cache_file" && rm -f "$resolved_dest"; }
+                        ln -sf "$cache_file" "$resolved_dest"
+                    fi
+                fi
+
+                files="$files $cache_file"
+                ;;
+
+            url+*)
+                # For other URL types (http, ftp, etc.)
+                if [ ! -f "$resolved_dest" ]; then
+                    log "$repo_name" "Downloading source for checksum: ${_res##url+}"
+                    mkdir -p "${resolved_dest%/*}"
+                    pkg_source_url "$resolved_dest" "${_res##url+}"
+                fi
+                files="$files $resolved_dest"
+                ;;
+
+            *)
+                # Local file
+                files="$files $resolved_dest"
+                ;;
         esac
     done < "$repo_dir/sources"
 
-    _b3 "$@"
+    _b3 $files
 }
 
 pkg_verify() {
