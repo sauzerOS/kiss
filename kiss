@@ -1308,19 +1308,17 @@ pkg_verify() {
         # Compare checksums
         if ! equ "$1-${chk:-null}" "$chk-$1" &&
            ! equ "$1-${chk:-null}" "$1-SKIP"; then
-        echo "source file is $files"
-        # Delete source file if checksum doesn't match 
-         for filetodel in $files; do
-        if [ -L "$filetodel" ]; then
-        target=$(readlink "$filetodel")
-        rm -f "$filetodel"
-        [ -f "$target" ] && rm -f "$target"
+
+        # Delete source files if checksums don't match 
+        for file_to_del in $files; do
+        if [ -L "$file_to_del" ]; then
+        target_file=$(readlink -f "$file_to_del")
+        rm -f "$file_to_del"
+        [ -f "$target_file" ] && rm -f "$target_file"
         else
-        rm -f "$filetodel"
+        rm -f "$file_to_del"
         fi
         done
-   
-
             die "$repo_name" "Checksum mismatch, source removed. Re-run 'kiss c $repo_name' to download again."
         fi
 
