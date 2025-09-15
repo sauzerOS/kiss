@@ -1799,7 +1799,7 @@ pkg_install() {
     # arg1: pre-install
     # arg2: package name
     # arg3: path to extracted package
-    run_hook pre_install "$_pkg" "$PWD"
+    run_hook pre-install "$_pkg" "$PWD"
 
     pkg_conflicts
 
@@ -1842,8 +1842,8 @@ pkg_install() {
         # arg1: post-install
         # arg2: package name
         # arg3: path to installed package database
-        run_hook_pkg post_install "$_pkg"
-        run_hook     post_install "$_pkg" "$sys_db/$_pkg"
+        run_hook_pkg post-install "$_pkg"
+        run_hook     post-install "$_pkg" "$sys_db/$_pkg"
 
         log "$_pkg" "Installed successfully"
 
