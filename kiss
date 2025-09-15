@@ -1305,9 +1305,25 @@ pkg_verify() {
 
         printf '%s\n%s\n' "- ${chk:-missing}" "+ ${1:-no source}"
 
-        equ "$1-${chk:-null}" "$chk-$1" ||
-        equ "$1-${chk:-null}" "$1-SKIP" ||
-            die "$repo_name" "Checksum mismatch"
+        # Compare checksums
+        if ! equ "$1-${chk:-null}" "$chk-$1" &&
+           ! equ "$1-${chk:-null}" "$1-SKIP"; then
+        echo "source file is $files"
+        # Delete source file if checksum doesn't match 
+         for filetodel in $files; do
+        if [ -L "$filetodel" ]; then
+        target=$(readlink "$filetodel")
+        rm -f "$filetodel"
+        [ -f "$target" ] && rm -f "$target"
+        else
+        rm -f "$filetodel"
+        fi
+        done
+   
+
+            die "$repo_name" "Checksum mismatch, source removed. Re-run 'kiss c $repo_name' to download again."
+        fi
+
 
         shift "$(($# != 0))"
     done < "$repo_dir/checksums"
