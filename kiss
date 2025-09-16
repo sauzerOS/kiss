@@ -1621,6 +1621,34 @@ pkg_remove_files() {
     done
 }
 
+pkg_force_remove_files() {
+    # Remove files exactly as listed in the manifest, no etc/hash checks.
+    # This mirrors pkg_remove_files minus the /etc hash logic and fd 3 usage.
+    while read -r file; do
+        _file=${KISS_ROOT:+"$KISS_ROOT/"}${file%%/}
+
+        # Queue all directory symlinks for later removal.
+        if [ -h "$_file" ] && [ -d "$_file" ]; then
+            case $file in /*/*/)
+                set -- "$@" "$_file"
+            esac
+
+        # Remove empty directories.
+        elif [ -d "$_file" ]; then
+            rmdir -- "$_file" 2>/dev/null || :
+
+        # Remove everything else.
+        else
+            rm -f -- "$_file"
+        fi
+    done
+
+    # Remove all broken directory symlinks.
+    for sym do
+        [ -e "$sym" ] || rm -f -- "$sym"
+    done
+}
+
 pkg_etc() {
     read -r sum_old <&3 2>/dev/null ||:
 
@@ -1680,15 +1708,34 @@ pkg_removable() {
 }
 
 pkg_remove() {
-    # Remove a package and all of its files. The '/etc' directory is handled
-    # differently and configuration files are *not* overwritten.
     [ -d "$sys_db/$1" ] || die "'$1' not installed"
 
-    trap_off
+    # KISS_FORCE=1: no dep checks, no etcsums, remove exactly what's in manifest,
+    # then drop the package's install db entry.
+    if [ "${KISS_FORCE:-0}" = "1" ]; then
+        trap_off
 
-    # Intended behavior.
-    # shellcheck disable=2030,2031
-    equ "$KISS_FORCE" 1  || pkg_removable "$1"
+        # Keep hooks consistent with normal path (pre-remove still runs).
+        run_hook_pkg pre-remove "$1"
+        run_hook     pre-remove "$1" "$sys_db/$1"
+
+        log "$1" "Force removing package (no dependency or etc checks)"
+        if [ -f "$sys_db/$1/manifest" ]; then
+            pkg_force_remove_files < "$sys_db/$1/manifest"
+        else
+            log "$1" "No manifest found; skipping file removal"
+        fi
+
+        # Remove the package database entry regardless of file removal results.
+        rm -rf -- "$sys_db/$1"
+
+        trap_on
+        log "$1" "Force removed successfully"
+        return
+    fi
+
+    # Original behavior (unchanged) when not forcing.
+    trap_off
 
     # arg1: pre-remove
     # arg2: package name
@@ -2108,14 +2155,24 @@ args() {
             # the state of the repository.
             case $action in r|remove)
                 export KISS_PATH="$sys_db:$KISS_PATH"
+
+            # Skip dependency ordering if forcing remove
+            if [ "${KISS_FORCE:-0}" = "1" ]; then
+            # Preserve the exact user-specified package list for removal.
+                redro="$*"
+                _skip_order=1
+            fi
             esac
 
-            # Order the argument list based on dependence.
-            pkg_order "$@"
+          # Only compute dependency order when not forcing.
+            if [ "$_skip_order" != "1" ]; then
+                # Order the argument list based on dependence.
+                pkg_order "$@"
 
-            # Intentional, globbing disabled.
-            # shellcheck disable=2046,2086
-            set -- $order
+                # Intentional, globbing disabled.
+                # shellcheck disable=2046,2086
+                set -- $order
+            fi
         ;;
     esac
 
