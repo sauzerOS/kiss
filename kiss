@@ -101,6 +101,13 @@ null() {
     [[ -z $1 ]]
 }
 
+    # Make sure we cleanup temporary directories on exit if debug is disabled.
+cleanup_tmpdirs() {
+    if [ "${KISS_DEBUG:-0}" ] && [ -n "$KISS_TMPDIR" ] && [ -n "$KISS_TMPDIR2" ]; then
+    rm -rf "$KISS_TMPDIR"/* "$KISS_TMPDIR2"/*
+    fi
+}
+
 tmp_file() {
     # Create a uniquely named temporary file and store its absolute path
     # in a variable (_tmp_file).
@@ -1319,8 +1326,15 @@ pkg_verify() {
         if ! equ "$1-${chk:-null}" "$chk-$1" &&
            ! equ "$1-${chk:-null}" "$1-SKIP"; then
 
-        # Delete source files if checksums don't match 
+        # Delete source files if checksums don't match
         for file_to_del in $files; do
+        # Skip local files
+        case "$file_to_del" in
+        */files/*|*/patches/*)
+        continue
+        ;;
+        esac
+
         if [ -L "$file_to_del" ]; then
         target_file=$(readlink -f "$file_to_del")
         rm -f "$file_to_del"
@@ -1331,7 +1345,6 @@ pkg_verify() {
         done
             die "$repo_name" "Checksum mismatch, source removed. Re-run 'kiss c $repo_name' to download again."
         fi
-
 
         shift "$(($# != 0))"
     done < "$repo_dir/checksums"
@@ -2104,6 +2117,7 @@ trap_INT() {
 
 trap_EXIT() {
     pkg_clean
+    cleanup_tmpdirs
     run_hook SIGEXIT
 }
 
@@ -2403,7 +2417,7 @@ pkg_check_removed_libs() {
     
     # Backup removed libs if any
     if [ -s "$removed_libs" ]; then
-        backup_dir="$KISS_TMPDIR/kiss-lib-backup"
+        backup_dir="/tmp/kiss-lib-backup"
         mkdir -p "$backup_dir"
         while read -r lib; do
             [ -f "$lib" ] || continue
