@@ -1,36 +1,19 @@
-#!/bin/sh -e
-# Check which package owns a file
+#!/bin/sh
+# Usage: kiss-owns <pattern>
+# Example: kiss-owns /usr/bin/killall
+# Output: psmisc /usr/bin/killall
 
-# Follow symlinks to any paths.
-case $1 in
-    /*)
-        cd -P "${KISS_ROOT:-/}${1%/*}"
-        [ "$PWD" = / ] && KISS_ROOT=
-    ;;
+KISS_DB_ROOT="${KISS_ROOT:+$KISS_ROOT}/var/db/kiss/installed"
 
-    */*)
-        cd -P "${1%/*}"
-    ;;
-
-    *)
-        cd -P .
-    ;;
-esac
-
-[ -f "$PWD/${1##*/}" ] || {
-    printf 'usage: kiss-owns [/path/to/file]\n' >&2
+if [ -z "$1" ]; then
+    printf 'usage: %s <pattern>\n' "$0" >&2
     exit 1
-}
+fi
 
-# Print the full path to the manifest file which contains
-# the match to our search.
-pkg_owns=$(grep -lFx \
-    "${PWD#"$KISS_ROOT"}/${1##*/}" \
-    "$KISS_ROOT/var/db/kiss/installed/"*/manifest)
+pattern="$1"
 
-
-# Extract the package name from the path above.
-pkg_owns=${pkg_owns%/*}
-pkg_owns=${pkg_owns##*/}
-
-printf '%s\n' "$pkg_owns"
+# Search all manifests for the pattern
+grep -F -- "$pattern" "$KISS_DB_ROOT"/*/manifest | while IFS=: read -r manifest_path match_line; do
+    pkgname=$(basename "$(dirname "$manifest_path")")
+    printf '%s %s\n' "$pkgname" "$match_line"
+done
