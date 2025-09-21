@@ -47,6 +47,10 @@ if [ -f /etc/kiss/kiss.conf ]; then
     done < /etc/kiss/kiss.conf
 fi
 
+# Unique PID marker for instance
+echo $$ > "$KISS_TMPDIR/kiss-pid-$$"
+
+
 # Apply LTO overrides if requested
 if [ "${KISS_LTO:-0}" -eq 1 ]; then
     # Only override if the _LTO variants are set
@@ -103,8 +107,19 @@ null() {
 
     # Make sure we cleanup temporary directories on exit if debug is disabled.
 cleanup_tmpdirs() {
-    if [ "${KISS_DEBUG:-0}" ] && [ -n "$KISS_TMPDIR" ] && [ -n "$KISS_TMPDIR2" ]; then
-    rm -rf "$KISS_TMPDIR"/* "$KISS_TMPDIR2"/*
+    if [ "${KISS_DEBUG:-0}" ] && [ -n "$KISS_TMPDIR" ] ; then
+    # Look for any PID files except our own
+        for pidfile in "$KISS_TMPDIR"/kiss-pid-*; do
+            [ "$pidfile" = "$KISS_TMPDIR/kiss-pid-$$" ] && continue
+            [ ! -f "$pidfile" ] && continue
+
+            otherpid=$(cat "$pidfile" 2>/dev/null)
+            if [ -n "$otherpid" ] && kill -0 "$otherpid" 2>/dev/null; then
+                echo "Another instance ($otherpid) is still running — skipping cleanup."
+                return
+            fi
+        done
+    rm -rf "$KISS_TMPDIR"/*
     fi
 }
 
