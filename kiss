@@ -1777,6 +1777,9 @@ pkg_remove() {
     log "$1" "Removing package"
     pkg_remove_files < "$sys_db/$1/manifest" 3< "$_tmp_file"
 
+    # Remove the package database entry
+    rm -rf -- "$sys_db/$1"
+
     trap_on
     log "$1" "Removed successfully"
 }
