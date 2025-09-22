@@ -48,6 +48,7 @@ if [ -f /etc/kiss/kiss.conf ]; then
 fi
 
 # Unique PID marker for instance
+#echo "setting kiss-pid"
 echo $$ > "$KISS_TMPDIR/kiss-pid-$$"
 
 
@@ -2259,8 +2260,10 @@ args() {
 
             # Run ldconfig if running as root and ldconfig exists
             if [ "$(id -u)" -eq 0 ] && command -v ldconfig >/dev/null; then
-                echo "🔧 Updating linker cache (ldconfig)..."
+                echo "🔧 Updating linker and icon cache"
                 ldconfig
+            # Update icon cache
+                gtk-update-icon-cache -f /usr/share/icons/hicolor/
             fi
             ;;
         l|list)         pkg_list_version "$@" ;;
@@ -2269,7 +2272,7 @@ args() {
         s|search)       for pkg do pkg_find "$pkg" all; done ;;
         u|update)       pkg_update ;;
         U|upgrade)      pkg_upgrade ;;
-        v|version)      printf '1.0\n' ;; # sauzerosversion
+        v|version)      printf '1.11\n' ;; # sauzerosversion
 
         '')
             log 'kiss [a|b|c|d|i|l|p|r|s|u|U|v] [pkg]...'
